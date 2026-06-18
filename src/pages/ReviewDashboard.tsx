@@ -16,6 +16,7 @@ import {
   Sparkles,
   ChevronDown,
   ChevronRight,
+  User,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
@@ -63,11 +64,12 @@ export default function ReviewDashboard() {
   }, [validationIssues, statusFilter]);
 
   const groupedIssues = useMemo(() => {
-    const groups = new Map<string, { label: string; subtitle?: string; issues: typeof validationIssues }>();
+    const groups = new Map<string, { label: string; subtitle?: string; issues: typeof validationIssues; writerId?: string }>();
     for (const issue of displayIssues) {
       let key = '';
       let label = '';
       let subtitle = '';
+      let writerId: string | undefined;
       switch (groupBy) {
         case 'writer': {
           let chapter = null;
@@ -76,9 +78,10 @@ export default function ReviewDashboard() {
             const sc = sceneMap.get(issue.sceneId);
             if (sc) chapter = chapterMap.get(sc.chapterId);
           }
-          const writerId = chapter?.writerId ?? 'unassigned';
-          const writer = writerMap.get(writerId);
-          key = writerId;
+          const wId = chapter?.writerId ?? 'unassigned';
+          const writer = writerMap.get(wId);
+          key = wId;
+          writerId = wId;
           label = writer?.name ?? '未分配负责人';
           subtitle = writer?.role === 'lead' ? '主笔' : writer?.role === 'writer' ? '编剧' : '访客';
           break;
@@ -119,7 +122,7 @@ export default function ReviewDashboard() {
         }
       }
       if (!groups.has(key)) {
-        groups.set(key, { label, subtitle, issues: [] });
+        groups.set(key, { label, subtitle, issues: [], writerId });
       }
       groups.get(key)!.issues.push(issue);
     }
@@ -127,6 +130,30 @@ export default function ReviewDashboard() {
       .map(([key, val]) => ({ key, ...val }))
       .sort((a, b) => b.issues.length - a.issues.length);
   }, [displayIssues, groupBy, writerMap, chapterMap, sceneMap]);
+
+  const writerFullStats = useMemo(() => {
+    const map = new Map<string, { total: number; open: number; needsLead: number; fixed: number; ignored: number; errors: number }>();
+    for (const issue of validationIssues) {
+      let chapter = null;
+      if (issue.chapterId) chapter = chapterMap.get(issue.chapterId);
+      if (!chapter && issue.sceneId) {
+        const sc = sceneMap.get(issue.sceneId);
+        if (sc) chapter = chapterMap.get(sc.chapterId);
+      }
+      const writerId = chapter?.writerId ?? 'unassigned';
+      if (!map.has(writerId)) {
+        map.set(writerId, { total: 0, open: 0, needsLead: 0, fixed: 0, ignored: 0, errors: 0 });
+      }
+      const s = map.get(writerId)!;
+      s.total++;
+      if (issue.status === 'open') s.open++;
+      if (issue.status === 'needs-lead') s.needsLead++;
+      if (issue.status === 'fixed') s.fixed++;
+      if (issue.status === 'ignored') s.ignored++;
+      if (issue.type === 'error') s.errors++;
+    }
+    return map;
+  }, [validationIssues, chapterMap, sceneMap]);
 
   const toggleGroup = (k: string) => {
     const next = new Set(expandedGroups);
@@ -370,60 +397,171 @@ export default function ReviewDashboard() {
             const groupFixed = group.issues.filter((i) => i.status === 'fixed').length;
             const allSelected = group.issues.every((i) => selectedIssueIds.has(i.id));
             const someSelected = group.issues.some((i) => selectedIssueIds.has(i.id));
+            const fullStats = group.writerId ? writerFullStats.get(group.writerId) : null;
+            const isWriterGroup = groupBy === 'writer';
+            const writer = group.writerId ? writerMap.get(group.writerId) : null;
+            const completionRate = fullStats && fullStats.total > 0
+              ? Math.round(((fullStats.fixed + fullStats.ignored) / fullStats.total) * 100)
+              : 0;
 
             return (
               <div key={group.key} className="card-dark">
-                <div
-                  className="px-3 py-2 flex items-center justify-between cursor-pointer hover:bg-ink-800/50 transition-colors"
-                  onClick={() => toggleGroup(group.key)}
-                >
-                  <div className="flex items-center gap-3">
-                    <button onClick={(e) => e.stopPropagation()} className="text-ash-500">
-                      {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                    </button>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={allSelected}
-                        ref={(el) => {
-                          if (el) el.indeterminate = !allSelected && someSelected;
-                        }}
-                        onChange={() => toggleAllInGroup(group.issues)}
-                        onClick={(e) => e.stopPropagation()}
-                        className="w-3.5 h-3.5 accent-blood-500 bg-ink-800 border-ink-600"
+                {isWriterGroup && fullStats ? (
+                  <div
+                    className="px-4 py-3 cursor-pointer hover:bg-ink-800/50 transition-colors"
+                    onClick={() => toggleGroup(group.key)}
+                  >
+                    <div className="flex items-start gap-3 mb-2.5">
+                      <div className="shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-blood-800 to-void-800 border-2 border-ink-600 flex items-center justify-center">
+                        <User className="w-5 h-5 text-ash-300" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-display text-sm text-ash-100 tracking-wide">{group.label}</h4>
+                          {writer?.role === 'lead' && (
+                            <span className="px-1.5 py-0.5 bg-blood-900/50 border border-blood-700/50 text-[9px] text-blood-400 font-body tracking-wider">主笔</span>
+                          )}
+                          {writer?.role === 'writer' && (
+                            <span className="px-1.5 py-0.5 bg-void-800/50 border border-void-700/50 text-[9px] text-frost-400 font-body tracking-wider">编剧</span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-ash-500 font-body mt-0.5">
+                          共 {fullStats.total} 条问题 · 完成度 {completionRate}%
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleAllInGroup(group.issues);
+                          }}
+                          className="text-ash-500 hover:text-ash-300"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={allSelected}
+                            ref={(el) => {
+                              if (el) el.indeterminate = !allSelected && someSelected;
+                            }}
+                            onChange={() => toggleAllInGroup(group.issues)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-3.5 h-3.5 accent-blood-500 bg-ink-800 border-ink-600"
+                          />
+                        </button>
+                        {isOpen ? <ChevronDown className="w-4 h-4 text-ash-500" /> : <ChevronRight className="w-4 h-4 text-ash-500" />}
+                      </div>
+                    </div>
+                    <div className="ml-13 grid grid-cols-4 gap-2 mb-2.5">
+                      <div className="bg-blood-900/20 border border-blood-800/40 rounded-sm px-2 py-1.5 text-center">
+                        <div className="text-lg font-display text-blood-400">{fullStats.open}</div>
+                        <div className="text-[9px] text-ash-500 font-body">待处理</div>
+                      </div>
+                      <div className="bg-ember-900/20 border border-ember-800/40 rounded-sm px-2 py-1.5 text-center">
+                        <div className="text-lg font-display text-ember-400">{fullStats.needsLead}</div>
+                        <div className="text-[9px] text-ash-500 font-body">待主笔</div>
+                      </div>
+                      <div className="bg-verdant-900/20 border border-verdant-800/40 rounded-sm px-2 py-1.5 text-center">
+                        <div className="text-lg font-display text-verdant-400">{fullStats.fixed}</div>
+                        <div className="text-[9px] text-ash-500 font-body">已改</div>
+                      </div>
+                      <div className="bg-ink-800/60 border border-ink-700/50 rounded-sm px-2 py-1.5 text-center">
+                        <div className="text-lg font-display text-ash-400">{fullStats.ignored}</div>
+                        <div className="text-[9px] text-ash-500 font-body">已忽略</div>
+                      </div>
+                    </div>
+                    <div className="h-1.5 bg-ink-800 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-verdant-700 to-verdant-400 transition-all duration-300"
+                        style={{ width: `${completionRate}%` }}
                       />
                     </div>
-                    <div>
-                      <div className="font-display text-sm text-ash-200">{group.label}</div>
-                      {group.subtitle && <div className="text-[10px] text-ash-500 font-body">{group.subtitle}</div>}
+                    {isLead && group.key !== currentUserId && (
+                      <div className="mt-2.5 flex items-center gap-1.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => {
+                            const ids = group.issues.filter((i) => i.status === 'open').map((i) => i.id);
+                            if (ids.length > 0) setIssueStatusBatch(ids, 'fixed');
+                          }}
+                          className="px-2 py-0.5 text-[10px] bg-verdant-900/30 text-verdant-400 border border-verdant-700/40 rounded font-body hover:bg-verdant-900/50 transition-colors"
+                        >
+                          <Check className="w-3 h-3 inline mr-0.5 -mt-0.5" /> 全部标记已改
+                        </button>
+                        <button
+                          onClick={() => {
+                            const ids = group.issues.filter((i) => i.status === 'open').map((i) => i.id);
+                            if (ids.length > 0) setIssueStatusBatch(ids, 'ignored');
+                          }}
+                          className="px-2 py-0.5 text-[10px] bg-ink-800 text-ash-400 border border-ink-600 rounded font-body hover:bg-ink-700 transition-colors"
+                        >
+                          <EyeOff className="w-3 h-3 inline mr-0.5 -mt-0.5" /> 全部忽略
+                        </button>
+                        {fullStats.needsLead > 0 && (
+                          <button
+                            onClick={() => {
+                              const ids = group.issues.filter((i) => i.status === 'needs-lead').map((i) => i.id);
+                              if (ids.length > 0) setIssueStatusBatch(ids, 'open');
+                            }}
+                            className="px-2 py-0.5 text-[10px] bg-blood-900/30 text-blood-400 border border-blood-700/40 rounded font-body hover:bg-blood-900/50 transition-colors"
+                          >
+                            <MessageSquare className="w-3 h-3 inline mr-0.5 -mt-0.5" /> 退回待处理
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    className="px-3 py-2 flex items-center justify-between cursor-pointer hover:bg-ink-800/50 transition-colors"
+                    onClick={() => toggleGroup(group.key)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <button onClick={(e) => e.stopPropagation()} className="text-ash-500">
+                        {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                      </button>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={allSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = !allSelected && someSelected;
+                          }}
+                          onChange={() => toggleAllInGroup(group.issues)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-3.5 h-3.5 accent-blood-500 bg-ink-800 border-ink-600"
+                        />
+                      </div>
+                      <div>
+                        <div className="font-display text-sm text-ash-200">{group.label}</div>
+                        {group.subtitle && <div className="text-[10px] text-ash-500 font-body">{group.subtitle}</div>}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {groupErrors > 0 && (
+                        <span className="flex items-center gap-1 px-2 py-0.5 bg-blood-900/40 border border-blood-700/50 rounded text-[10px] text-blood-300 font-body">
+                          <AlertTriangle className="w-2.5 h-2.5" />{groupErrors}
+                        </span>
+                      )}
+                      {groupWarnings > 0 && (
+                        <span className="flex items-center gap-1 px-2 py-0.5 bg-ember-800/30 border border-ember-700/50 rounded text-[10px] text-ember-500 font-body">
+                          <AlertCircle className="w-2.5 h-2.5" />{groupWarnings}
+                        </span>
+                      )}
+                      {groupNeedsLead > 0 && (
+                        <span className="flex items-center gap-1 px-2 py-0.5 bg-ember-900/30 border border-ember-700/40 rounded text-[10px] text-ember-400 font-body">
+                          <MessageSquare className="w-2.5 h-2.5" />待确认 {groupNeedsLead}
+                        </span>
+                      )}
+                      {groupFixed > 0 && (
+                        <span className="flex items-center gap-1 px-2 py-0.5 bg-verdant-900/20 border border-verdant-700/40 rounded text-[10px] text-verdant-500 font-body">
+                          <Check className="w-2.5 h-2.5" />已改 {groupFixed}
+                        </span>
+                      )}
+                      <span className="text-[11px] text-ash-500 font-body w-8 text-right">
+                        {group.issues.length}
+                      </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    {groupErrors > 0 && (
-                      <span className="flex items-center gap-1 px-2 py-0.5 bg-blood-900/40 border border-blood-700/50 rounded text-[10px] text-blood-300 font-body">
-                        <AlertTriangle className="w-2.5 h-2.5" />{groupErrors}
-                      </span>
-                    )}
-                    {groupWarnings > 0 && (
-                      <span className="flex items-center gap-1 px-2 py-0.5 bg-ember-800/30 border border-ember-700/50 rounded text-[10px] text-ember-500 font-body">
-                        <AlertCircle className="w-2.5 h-2.5" />{groupWarnings}
-                      </span>
-                    )}
-                    {groupNeedsLead > 0 && (
-                      <span className="flex items-center gap-1 px-2 py-0.5 bg-ember-900/30 border border-ember-700/40 rounded text-[10px] text-ember-400 font-body">
-                        <MessageSquare className="w-2.5 h-2.5" />待确认 {groupNeedsLead}
-                      </span>
-                    )}
-                    {groupFixed > 0 && (
-                      <span className="flex items-center gap-1 px-2 py-0.5 bg-verdant-900/20 border border-verdant-700/40 rounded text-[10px] text-verdant-500 font-body">
-                        <Check className="w-2.5 h-2.5" />已改 {groupFixed}
-                      </span>
-                    )}
-                    <span className="text-[11px] text-ash-500 font-body w-8 text-right">
-                      {group.issues.length}
-                    </span>
-                  </div>
-                </div>
+                )}
                 {isOpen && (
                   <div className="border-t border-ink-800 divide-y divide-ink-800/50">
                     {group.issues.map((issue) => {

@@ -92,6 +92,7 @@ interface AppState {
 
   addPendingForeshadowing: (chapterId: string, clue: { clueId: string; clueTitle: string; endingId: string; endingTitle: string }) => void;
   clearPendingForeshadowing: (chapterId: string) => void;
+  removePendingForeshadowing: (chapterId: string, clueId: string) => void;
 
   buildCurseFlow: () => CurseFlowBranch[];
 }
@@ -397,6 +398,19 @@ export const useAppStore = create<AppState>()(
           const next = { ...s.pendingForeshadowing };
           delete next[chapterId];
           return { pendingForeshadowing: next };
+        });
+      },
+      removePendingForeshadowing: (chapterId, clueId) => {
+        set((s) => {
+          const existing = s.pendingForeshadowing[chapterId];
+          if (!existing) return {};
+          const next = existing.filter((e) => e.clueId !== clueId);
+          return {
+            pendingForeshadowing: {
+              ...s.pendingForeshadowing,
+              [chapterId]: next,
+            },
+          };
         });
       },
     }),

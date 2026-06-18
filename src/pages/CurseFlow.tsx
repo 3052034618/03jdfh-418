@@ -10,11 +10,13 @@ import {
   ChevronRight,
   Zap,
   CircleOff,
-  GitBranch,
-  CircleDot,
   X,
   GitCompareArrows,
   Check,
+  GitBranch,
+  ArrowRightLeft,
+  Layers,
+  Sparkles,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { ENDING_TYPE_LABEL } from '@/types';
@@ -25,10 +27,95 @@ const COLOR_A = { stroke: 'rgba(239, 68, 68, 0.85)', dot: '#ef4444', text: 'text
 const COLOR_B = { stroke: 'rgba(56, 189, 248, 0.85)', dot: '#38bdf8', text: 'text-frost-400', label: 'B' };
 const COLOR_COMMON = { dot: '#52b788', stroke: 'rgba(82, 183, 136, 0.6)' };
 
+interface DiffAnalysis {
+  forkIndex: number;
+  convergeIndex: number;
+  diffReasons: { index: number; type: 'fork' | 'converge' | 'value-diff' | 'scene-diff' | 'length'; label: string }[];
+  nodeDiffSetA: Set<number>;
+  nodeDiffSetB: Set<number>;
+  commonSet: Set<number>;
+}
+
+function analyzeDiff(a: CurseFlowBranch, b: CurseFlowBranch): DiffAnalysis {
+  let forkIndex = -1;
+  let convergeIndex = -1;
+  const diffReasons: DiffAnalysis['diffReasons'] = [];
+
+  const nodeKey = (s: { chapterId: string; sceneId: string; choiceId?: string }) =>
+    `${s.chapterId}|${s.sceneId}|${s.choiceId ?? ''}`;
+
+  const minLen = Math.min(a.snapshots.length, b.snapshots.length);
+  const nodeDiffSetA = new Set<number>();
+  const nodeDiffSetB = new Set<number>();
+  const commonSet = new Set<number>();
+
+  for (let i = 0; i < minLen; i++) {
+    const sa = a.snapshots[i];
+    const sb = b.snapshots[i];
+    const sameNode = nodeKey(sa) === nodeKey(sb);
+    const valDiff = Math.abs(sa.curseValue - sb.curseValue);
+
+    if (forkIndex === -1 && !sameNode) {
+      forkIndex = i;
+      diffReasons.push({
+        index: i,
+        type: 'fork',
+        label: `第一次分叉：选择了不同分支路径（A → ${sa.sceneTitle} / B → ${sb.sceneTitle}）`,
+      });
+    }
+
+    if (forkIndex !== -1 && convergeIndex === -1 && sameNode) {
+      convergeIndex = i;
+      diffReasons.push({
+        index: i,
+        type: 'converge',
+        label: `重新汇合：两条线回到同一场景「${sa.sceneTitle}」`,
+      });
+    }
+
+    if (sameNode && valDiff < 3) {
+      commonSet.add(i);
+    }
+
+    if (!sameNode) {
+      nodeDiffSetA.add(i);
+      nodeDiffSetB.add(i);
+      if (forkIndex !== -1 && (convergeIndex === -1 || i < convergeIndex)) {
+        diffReasons.push({
+          index: i,
+          type: 'scene-diff',
+          label: `剧情节点不同（A: ${sa.sceneTitle}${sa.choiceText ? ` · ${sa.choiceText}` : ''} / B: ${sb.sceneTitle}${sb.choiceText ? ` · ${sb.choiceText}` : ''}）`,
+        });
+      }
+    } else if (valDiff >= 3) {
+      diffReasons.push({
+        index: i,
+        type: 'value-diff',
+        label: `同场景但诅咒值相差 ${valDiff}（A: ${sa.curseValue} / B: ${sb.curseValue}）`,
+      });
+    }
+  }
+
+  if (a.snapshots.length !== b.snapshots.length) {
+    const longer = a.snapshots.length > b.snapshots.length ? 'A' : 'B';
+    const diff = Math.abs(a.snapshots.length - b.snapshots.length);
+    diffReasons.push({
+      index: minLen,
+      type: 'length',
+      label: `分支长度不同：${longer} 线多出 ${diff} 个节点`,
+    });
+    if (longer === 'A') {
+      for (let i = minLen; i < a.snapshots.length; i++) nodeDiffSetA.add(i);
+    } else {
+      for (let i = minLen; i < b.snapshots.length; i++) nodeDiffSetB.add(i);
+    }
+  }
+
+  return { forkIndex, convergeIndex, diffReasons, nodeDiffSetA, nodeDiffSetB, commonSet };
+}
+
 export default function CurseFlow() {
   const navigate = useNavigate();
-  const chapters = useAppStore((s) => s.chapters);
-  const endings = useAppStore((s) => s.endings);
   const buildCurseFlow = useAppStore((s) => s.buildCurseFlow);
   const [selectedBranchKeys, setSelectedBranchKeys] = useState<string[]>([]);
 
@@ -49,6 +136,11 @@ export default function CurseFlow() {
     () => branches.some((b) => b.snapshots.some((s) => s.warning)),
     [branches],
   );
+
+  const diffAnalysis = useMemo<DiffAnalysis | null>(() => {
+    if (!branchA || !branchB) return null;
+    return analyzeDiff(branchA, branchB);
+  }, [branchA, branchB]);
 
   const toggleBranch = (key: string) => {
     setSelectedBranchKeys((prev) => {
@@ -182,62 +274,23 @@ export default function CurseFlow() {
     );
   };
 
-  const renderCompareCurves = (a: CurseFlowBranch, b: CurseFlowBranch) => {
+  const renderCompareCurves = (a: CurseFlowBranch, b: CurseFlowBranch, analysis: DiffAnalysis) => {
     const maxVal = Math.max(globalMax, a.maxCurse, b.maxCurse, 1);
     const maxLen = Math.max(a.snapshots.length, b.snapshots.length);
     const width = 820;
-    const height = 220;
+    const height = 240;
     const padding = 28;
     const stepX = (width - padding * 2) / Math.max(maxLen - 1, 1);
 
     const buildPoints = (branch: CurseFlowBranch) =>
       branch.snapshots.map((s, i) => {
         const x = padding + i * stepX;
-        const y = height - padding - (s.curseValue / maxVal) * (height - padding * 2);
+        const y = height - padding - (s.curseValue / maxVal) * (height - padding * 2 - 20);
         return { x, y, snapshot: s };
       });
 
     const pointsA = buildPoints(a);
     const pointsB = buildPoints(b);
-
-    const commonSet = (() => {
-      const set = new Set<string>();
-      const bScenes = new Map(b.snapshots.map((s) => [`${s.chapterId}|${s.sceneId}|${s.choiceId ?? ''}`, s]));
-      for (const sa of a.snapshots) {
-        const key = `${sa.chapterId}|${sa.sceneId}|${sa.choiceId ?? ''}`;
-        const sb = bScenes.get(key);
-        if (sb && Math.abs(sa.curseValue - sb.curseValue) < 3) {
-          set.add(key);
-        }
-      }
-      return set;
-    })();
-
-    const isCommon = (s: typeof a.snapshots[number]) =>
-      commonSet.has(`${s.chapterId}|${s.sceneId}|${s.choiceId ?? ''}`);
-
-    const diffSetA = new Set(
-      a.snapshots
-        .map((s, i) => ({ s, i }))
-        .filter(({ s, i }) => {
-          if (isCommon(s)) return false;
-          const sb = b.snapshots[i];
-          if (!sb) return true;
-          return Math.abs(s.curseValue - sb.curseValue) >= 3;
-        })
-        .map(({ s, i }) => i),
-    );
-    const diffSetB = new Set(
-      b.snapshots
-        .map((s, i) => ({ s, i }))
-        .filter(({ s, i }) => {
-          if (isCommon(s)) return false;
-          const sa = a.snapshots[i];
-          if (!sa) return true;
-          return Math.abs(s.curseValue - sa.curseValue) >= 3;
-        })
-        .map(({ s, i }) => i),
-    );
 
     const buildPath = (pts: { x: number; y: number }[]) =>
       pts
@@ -250,10 +303,32 @@ export default function CurseFlow() {
         })
         .join(' ');
 
+    const renderDiamond = (x: number, y: number, color: string, label: string) => (
+      <g>
+        <polygon
+          points={`${x},${y - 10} ${x + 9},${y} ${x},${y + 10} ${x - 9},${y}`}
+          fill={color}
+          stroke="#0a0a0f"
+          strokeWidth="2"
+        />
+        <text
+          x={x}
+          y={y - 18}
+          textAnchor="middle"
+          fill={color}
+          fontSize="10"
+          fontFamily="Cinzel"
+          fontWeight="bold"
+        >
+          {label}
+        </text>
+      </g>
+    );
+
     return (
       <svg width={width} height={height} className="w-full">
         {Array.from({ length: 6 }).map((_, i) => {
-          const y = height - padding - (i / 5) * (height - padding * 2);
+          const y = height - padding - 10 - (i / 5) * (height - padding * 2 - 20);
           return (
             <g key={i}>
               <line
@@ -278,41 +353,51 @@ export default function CurseFlow() {
           );
         })}
 
-        <path d={buildPath(pointsA)} fill="none" stroke={COLOR_A.stroke} strokeWidth="2.2" opacity="0.9" />
-        <path d={buildPath(pointsB)} fill="none" stroke={COLOR_B.stroke} strokeWidth="2.2" opacity="0.9" strokeDasharray="6,3" />
+        <path d={buildPath(pointsA)} fill="none" stroke={COLOR_A.stroke} strokeWidth="2.5" opacity="0.95" />
+        <path d={buildPath(pointsB)} fill="none" stroke={COLOR_B.stroke} strokeWidth="2.5" opacity="0.95" strokeDasharray="6,3" />
+
+        {analysis.forkIndex >= 0 && pointsA[analysis.forkIndex] &&
+          renderDiamond(pointsA[analysis.forkIndex].x, pointsA[analysis.forkIndex].y - 28, '#f59e0b', 'FORK')}
+        {analysis.convergeIndex >= 0 && pointsA[analysis.convergeIndex] &&
+          renderDiamond(pointsA[analysis.convergeIndex].x, pointsA[analysis.convergeIndex].y - 28, '#52b788', 'MERGE')}
 
         {pointsA.map((p, i) => {
-          const common = isCommon(p.snapshot);
-          const isDiff = diffSetA.has(i);
+          const common = analysis.commonSet.has(i);
+          const nodeDiff = analysis.nodeDiffSetA.has(i);
+          const isDiff = !common;
+          const valDiff = b.snapshots[i] ? Math.abs(p.snapshot.curseValue - b.snapshots[i].curseValue) : 0;
+          const isFork = analysis.forkIndex === i;
+          const isConverge = analysis.convergeIndex === i;
           return (
             <g key={`a-${i}`} onClick={() => handleJumpToScene(p.snapshot.chapterId, p.snapshot.sceneId)} className="cursor-pointer">
               <circle
                 cx={p.x}
                 cy={p.y}
-                r={common ? 4 : isDiff ? 7 : 5}
+                r={common ? 4 : nodeDiff ? 8 : isDiff ? 7 : 5}
                 fill={common ? COLOR_COMMON.dot : COLOR_A.dot}
-                stroke={isDiff ? '#fca5a5' : '#0a0a0f'}
-                strokeWidth={isDiff ? 3 : 2}
+                stroke={isFork ? '#f59e0b' : isConverge ? '#52b788' : nodeDiff ? '#f59e0b' : isDiff ? '#fca5a5' : '#0a0a0f'}
+                strokeWidth={isFork || isConverge ? 3.5 : nodeDiff ? 3.5 : isDiff ? 3 : 2}
               />
-              {isDiff && (
+              {isDiff && !common && (
                 <text
                   x={p.x}
-                  y={p.y - 14}
+                  y={p.y - 12}
                   textAnchor="middle"
-                  fill="#fca5a5"
+                  fill={nodeDiff ? '#f59e0b' : '#fca5a5'}
                   fontSize="9"
                   fontFamily="JetBrains Mono"
+                  fontWeight="bold"
                 >
-                  Δ{Math.abs(p.snapshot.curseValue - (b.snapshots[i]?.curseValue ?? 0))}
+                  {nodeDiff ? '≠' : `Δ${valDiff}`}
                 </text>
               )}
-              {!isDiff && (
+              {common && (
                 <text
                   x={p.x}
-                  y={p.y + 17}
+                  y={p.y + 18}
                   textAnchor="middle"
-                  fill={common ? 'rgba(148, 163, 184, 0.6)' : 'rgba(252, 165, 165, 0.85)'}
-                  fontSize="8.5"
+                  fill="rgba(148, 163, 184, 0.5)"
+                  fontSize="8"
                   fontFamily="JetBrains Mono"
                 >
                   {p.snapshot.curseValue}
@@ -323,39 +408,42 @@ export default function CurseFlow() {
         })}
 
         {pointsB.map((p, i) => {
-          const common = isCommon(p.snapshot);
-          const isDiff = diffSetB.has(i);
+          const common = analysis.commonSet.has(i);
           if (common) return null;
+          const nodeDiff = analysis.nodeDiffSetB.has(i);
+          const isDiff = !common;
+          const valDiff = a.snapshots[i] ? Math.abs(p.snapshot.curseValue - a.snapshots[i].curseValue) : 0;
           return (
             <g key={`b-${i}`} onClick={() => handleJumpToScene(p.snapshot.chapterId, p.snapshot.sceneId)} className="cursor-pointer">
               <circle
                 cx={p.x}
                 cy={p.y}
-                r={isDiff ? 7 : 5}
+                r={nodeDiff ? 8 : isDiff ? 7 : 5}
                 fill={COLOR_B.dot}
-                stroke={isDiff ? '#7dd3fc' : '#0a0a0f'}
-                strokeWidth={isDiff ? 3 : 2}
+                stroke={nodeDiff ? '#f59e0b' : isDiff ? '#7dd3fc' : '#0a0a0f'}
+                strokeWidth={nodeDiff ? 3.5 : isDiff ? 3 : 2}
                 opacity="0.95"
               />
               {isDiff && (
                 <text
                   x={p.x}
-                  y={p.y + 20}
+                  y={p.y + 24}
                   textAnchor="middle"
-                  fill="#7dd3fc"
+                  fill={nodeDiff ? '#f59e0b' : '#7dd3fc'}
                   fontSize="9"
                   fontFamily="JetBrains Mono"
+                  fontWeight="bold"
                 >
-                  Δ{Math.abs(p.snapshot.curseValue - (a.snapshots[i]?.curseValue ?? 0))}
+                  {nodeDiff ? '≠' : `Δ${valDiff}`}
                 </text>
               )}
               {!isDiff && (
                 <text
                   x={p.x}
-                  y={p.y + 17}
+                  y={p.y + 18}
                   textAnchor="middle"
-                  fill="rgba(125, 211, 252, 0.9)"
-                  fontSize="8.5"
+                  fill="rgba(125, 211, 252, 0.8)"
+                  fontSize="8"
                   fontFamily="JetBrains Mono"
                 >
                   {p.snapshot.curseValue}
@@ -375,24 +463,26 @@ export default function CurseFlow() {
           <TrendingUp className="w-5 h-5 text-ember-500" />
           <div>
             <h2 className="font-display text-lg text-ash-100 tracking-wider">
-              诅咒值走向{isCompareMode ? ' · 分支对比' : ''}
+              诅咒值走向{isCompareMode ? ' · 分支对比分析' : ''}
             </h2>
             <p className="text-[11px] text-ash-600 font-body">
               {isCompareMode
-                ? '对比两条分支：共同节点=绿色，差异节点=亮色加粗并标注差值'
-                : '跨章节分支诅咒值变化曲线，预警异常波动。选中两条进入对比模式'}
+                ? '对比两条分支：分叉点/汇合点用菱形标出，≠ 表示剧情节点不同'
+                : '跨章节分支诅咒值变化曲线，选中 2 条进入对比分析'}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {isCompareMode && (
+          {isCompareMode && diffAnalysis && (
             <span className="flex items-center gap-1 px-2.5 py-1 bg-void-800/50 border border-void-700/60 text-[11px] text-frost-400 font-body">
-              <GitCompareArrows className="w-3 h-3" /> 对比模式
+              <GitCompareArrows className="w-3 h-3" />
+              {diffAnalysis.diffReasons.length} 处差异
             </span>
           )}
           {hasWarnings && (
             <span className="flex items-center gap-1 px-3 py-1.5 bg-blood-900/30 border border-blood-700/50 text-[11px] text-blood-400 font-body">
-              <Zap className="w-3 h-3" /> 检测到 {branches.flatMap((b) => b.snapshots.filter((s) => s.warning)).length} 处异常
+              <Zap className="w-3 h-3" />
+              检测到 {branches.flatMap((b) => b.snapshots.filter((s) => s.warning)).length} 处异常
             </span>
           )}
           <span className="text-[11px] text-ash-600 font-body">
@@ -405,7 +495,7 @@ export default function CurseFlow() {
         <div className="w-80 shrink-0 border-r border-ink-700/60 bg-ink-900/40 flex flex-col min-h-0">
           <div className="p-3 border-b border-ink-700/60 flex items-center justify-between">
             <div className="label-dark m-0">
-              {isCompareMode ? `对比：A / B（最多2条）` : '分支路径'}
+              {isCompareMode ? `对比分支 A / B` : '分支路径'}
             </div>
             {selectedBranches.length > 0 && (
               <button onClick={clearSelection} className="text-[10px] text-ash-500 hover:text-ash-300 font-body flex items-center gap-0.5">
@@ -477,11 +567,11 @@ export default function CurseFlow() {
                 <TrendingUp className="w-12 h-12 mx-auto mb-3 opacity-20" />
                 <p className="text-sm font-body">请从左侧选择 1-2 条分支路径</p>
                 <p className="text-[11px] text-ash-600 font-body mt-1">
-                  选 1 条看单条曲线，选 2 条进入对比模式
+                  选 1 条看单条曲线，选 2 条进入对比分析模式
                 </p>
               </div>
             </div>
-          ) : isCompareMode && branchA && branchB ? (
+          ) : isCompareMode && branchA && branchB && diffAnalysis ? (
             <div className="space-y-5 animate-fade-in">
               <div className="grid grid-cols-2 gap-4">
                 <div className={cn(
@@ -539,9 +629,11 @@ export default function CurseFlow() {
               <div className="card-dark">
                 <div className="px-5 py-4 border-b border-ink-700/50 flex items-center justify-between">
                   <div>
-                    <h3 className="font-display text-sm text-ash-100 tracking-wider">分支对比曲线</h3>
+                    <h3 className="font-display text-sm text-ash-100 tracking-wider">对比曲线</h3>
                     <p className="text-[11px] text-ash-600 font-body mt-0.5">
-                      绿色=共同节点 · 亮色加粗=差异节点 · 点击节点跳转场景
+                      <span className="inline-block w-2.5 h-2.5 rounded-full bg-verdant-500 mr-1 align-middle" /> 共同节点
+                      <span className="inline-block w-2.5 h-2.5 rounded-sm bg-ember-500 ml-3 mr-1 align-middle" /> 节点不同（剧情分歧）
+                      <span className="inline-block w-2.5 h-2.5 rounded-full bg-blood-500 ml-3 mr-1 align-middle" /> 诅咒值差异 ≥3
                     </p>
                   </div>
                   <div className="flex items-center gap-4 text-[10px] font-body">
@@ -549,15 +641,62 @@ export default function CurseFlow() {
                       <span className="w-3 h-3 rounded-full bg-blood-500" /> 分支 A
                     </span>
                     <span className="flex items-center gap-1 text-ash-600">
-                      <span className="w-3 h-3 rounded-full bg-frost-500" /> 分支 B（虚线）
-                    </span>
-                    <span className="flex items-center gap-1 text-ash-600">
-                      <span className="w-3 h-3 rounded-full bg-verdant-500" /> 共同节点
+                      <span className="w-3 h-0.5 bg-frost-500 border-b-2 border-dashed" /> 分支 B
                     </span>
                   </div>
                 </div>
                 <div className="p-5">
-                  {renderCompareCurves(branchA, branchB)}
+                  {renderCompareCurves(branchA, branchB, diffAnalysis)}
+                </div>
+              </div>
+
+              <div className="card-dark">
+                <div className="px-5 py-4 border-b border-ink-700/50 flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-frost-400" />
+                  <h3 className="font-display text-sm text-ash-100 tracking-wider">差异分析</h3>
+                  <span className="text-[10px] text-ash-600 font-body">
+                    共 {diffAnalysis.diffReasons.length} 处差异
+                  </span>
+                </div>
+                <div className="divide-y divide-ink-700/40 max-h-64 overflow-y-auto">
+                  {diffAnalysis.diffReasons.length === 0 ? (
+                    <div className="px-5 py-6 text-center text-[11px] text-ash-500 font-body">
+                      <Check className="w-6 h-6 mx-auto mb-2 text-verdant-500/60" />
+                      两条分支高度一致
+                    </div>
+                  ) : (
+                    diffAnalysis.diffReasons.map((reason, idx) => (
+                      <div key={idx} className="px-5 py-2.5 flex items-start gap-3 hover:bg-ink-800/30">
+                        <span className="text-[10px] font-display text-ash-600 w-6 mt-0.5">#{reason.index + 1}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 mb-0.5">
+                            {reason.type === 'fork' && <GitBranch className="w-3 h-3 text-ember-500" />}
+                            {reason.type === 'converge' && <ArrowRightLeft className="w-3 h-3 text-verdant-500" />}
+                            {reason.type === 'scene-diff' && <Layers className="w-3 h-3 text-ember-400" />}
+                            {reason.type === 'value-diff' && <TrendingUp className="w-3 h-3 text-blood-400" />}
+                            {reason.type === 'length' && <Sparkles className="w-3 h-3 text-void-400" />}
+                            <span className={cn(
+                              'text-[10px] font-medium uppercase tracking-wider',
+                              reason.type === 'fork' && 'text-ember-500',
+                              reason.type === 'converge' && 'text-verdant-500',
+                              reason.type === 'scene-diff' && 'text-ember-400',
+                              reason.type === 'value-diff' && 'text-blood-400',
+                              reason.type === 'length' && 'text-void-400',
+                            )}>
+                              {reason.type === 'fork' && '分叉点'}
+                              {reason.type === 'converge' && '汇合点'}
+                              {reason.type === 'scene-diff' && '剧情节点不同'}
+                              {reason.type === 'value-diff' && '诅咒值差异'}
+                              {reason.type === 'length' && '长度差异'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-ash-400 font-body leading-relaxed">
+                            {reason.label}
+                          </p>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -570,53 +709,49 @@ export default function CurseFlow() {
                     <thead>
                       <tr className="text-ash-500 border-b border-ink-700/50">
                         <th className="text-left px-5 py-2 w-10">#</th>
-                        <th className="text-left px-3 py-2">分支 A（{branchA.endingTitle?.slice(0, 12) || '未完结'}…）</th>
+                        <th className="text-left px-3 py-2">分支 A</th>
                         <th className="text-center px-3 py-2 w-14">诅咒值</th>
-                        <th className="text-center px-3 py-2 w-14">差值</th>
+                        <th className="text-center px-3 py-2 w-14">差异</th>
                         <th className="text-center px-3 py-2 w-14">诅咒值</th>
-                        <th className="text-left px-3 py-2">分支 B（{branchB.endingTitle?.slice(0, 12) || '未完结'}…）</th>
+                        <th className="text-left px-3 py-2">分支 B</th>
                       </tr>
                     </thead>
                     <tbody>
                       {Array.from({ length: Math.max(branchA.snapshots.length, branchB.snapshots.length) }).map((_, i) => {
                         const sa = branchA.snapshots[i];
                         const sb = branchB.snapshots[i];
-                        const diff = sa && sb ? Math.abs(sa.curseValue - sb.curseValue) : null;
-                        const common =
-                          sa && sb &&
-                          sa.chapterId === sb.chapterId &&
-                          sa.sceneId === sb.sceneId &&
-                          (sa.choiceId ?? '') === (sb.choiceId ?? '') &&
-                          (diff ?? 99) < 3;
+                        const common = diffAnalysis.commonSet.has(i);
+                        const nodeDiff = diffAnalysis.nodeDiffSetA.has(i) || diffAnalysis.nodeDiffSetB.has(i);
+                        const valDiff = sa && sb ? Math.abs(sa.curseValue - sb.curseValue) : null;
+
                         const rowBg =
-                          diff && diff >= 3 ? 'bg-blood-900/15' :
-                          common ? 'bg-verdant-900/10' :
+                          nodeDiff ? 'bg-ember-900/10' :
+                          common ? 'bg-verdant-900/8' :
+                          valDiff && valDiff >= 3 ? 'bg-blood-900/12' :
                           !sa || !sb ? 'bg-ink-800/30' : '';
 
-                        const renderCell = (s: typeof sa, color: string) => s ? (
-                          <>
-                            <div
-                              onClick={() => handleJumpToScene(s.chapterId, s.sceneId)}
-                              className="cursor-pointer hover:text-ash-200"
-                            >
-                              <div className="flex items-center gap-1">
-                                <span className="text-ash-500">{s.chapterTitle}</span>
-                                <ChevronRight className="w-2.5 h-2.5 text-ash-600" />
-                                <span className="text-ash-300">{s.sceneTitle}</span>
-                              </div>
-                              {s.choiceText && (
-                                <div className="text-ember-600 mt-0.5 truncate">选项：{s.choiceText}</div>
-                              )}
-                              {s.warning && (
-                                <div className={cn('mt-0.5 flex items-center gap-0.5', s.warning === 'spike' ? 'text-blood-400' : 'text-ember-500')}>
-                                  <AlertTriangle className="w-2.5 h-2.5" />
-                                  {s.warning === 'spike' ? '暴涨' : '解除过早'}
-                                </div>
-                              )}
+                        const renderCell = (s: typeof sa, side: 'A' | 'B') => s ? (
+                          <div
+                            onClick={() => handleJumpToScene(s.chapterId, s.sceneId)}
+                            className="cursor-pointer hover:text-ash-200"
+                          >
+                            <div className="flex items-center gap-1">
+                              <span className="text-ash-500">{s.chapterTitle}</span>
+                              <ChevronRight className="w-2.5 h-2.5 text-ash-600" />
+                              <span className="text-ash-300">{s.sceneTitle}</span>
                             </div>
-                          </>
+                            {s.choiceText && (
+                              <div className="text-ember-600 mt-0.5 truncate">选项：{s.choiceText}</div>
+                            )}
+                            {s.warning && (
+                              <div className={cn('mt-0.5 flex items-center gap-0.5', s.warning === 'spike' ? 'text-blood-400' : 'text-ember-500')}>
+                                <AlertTriangle className="w-2.5 h-2.5" />
+                                {s.warning === 'spike' ? '暴涨' : '解除过早'}
+                              </div>
+                            )}
+                          </div>
                         ) : (
-                          <span className="text-ash-600 italic">— 分支到此结束 —</span>
+                          <span className="text-ash-600 italic">— 到此结束 —</span>
                         );
 
                         return (
@@ -629,18 +764,22 @@ export default function CurseFlow() {
                               </span>
                             </td>
                             <td className="text-center px-3 py-2.5">
-                              {diff === null ? (
+                              {valDiff === null ? (
                                 <span className="text-ash-600">—</span>
-                              ) : diff >= 3 ? (
-                                <span className="px-1.5 py-0.5 rounded bg-blood-900/40 text-blood-400 border border-blood-700/50">
-                                  Δ {diff}
-                                </span>
                               ) : common ? (
                                 <span className="text-verdant-500 flex items-center justify-center gap-0.5">
                                   <Check className="w-3 h-3" /> 一致
                                 </span>
+                              ) : nodeDiff ? (
+                                <span className="px-1.5 py-0.5 rounded bg-ember-900/40 text-ember-400 border border-ember-700/50">
+                                  ≠ 节点不同
+                                </span>
+                              ) : valDiff >= 3 ? (
+                                <span className="px-1.5 py-0.5 rounded bg-blood-900/40 text-blood-400 border border-blood-700/50">
+                                  Δ {valDiff}
+                                </span>
                               ) : (
-                                <span className="text-ash-500">Δ {diff}</span>
+                                <span className="text-ash-500">Δ {valDiff}</span>
                               )}
                             </td>
                             <td className="text-center px-3 py-2.5">

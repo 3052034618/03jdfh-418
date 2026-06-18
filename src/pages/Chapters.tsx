@@ -58,6 +58,7 @@ export default function Chapters() {
   const setIssueStatus = useAppStore((s) => s.setIssueStatus);
   const pendingForeshadowing = useAppStore((s) => s.pendingForeshadowing);
   const clearPendingForeshadowing = useAppStore((s) => s.clearPendingForeshadowing);
+  const removePendingForeshadowing = useAppStore((s) => s.removePendingForeshadowing);
 
   const updateChapter = useAppStore((s) => s.updateChapter);
   const setChapterWriter = useAppStore((s) => s.setChapterWriter);
@@ -114,14 +115,46 @@ export default function Chapters() {
   }, [validationIssues, activeChapter]);
 
   const handleSaveAndValidate = () => {
-    if (!activeChapterId) return;
+    if (!activeChapterId || !activeChapter) return;
     setSaving(true);
     setTimeout(() => {
       runChapterValidation(activeChapterId);
-      clearPendingForeshadowing(activeChapterId);
+      const allClueIds = new Set<string>();
+      for (const sc of activeChapter.scenes) {
+        for (const cid of sc.referencedClueIds) {
+          allClueIds.add(cid);
+        }
+      }
+      const pending = pendingForeshadowing[activeChapterId];
+      if (pending) {
+        for (const hint of pending) {
+          if (allClueIds.has(hint.clueId)) {
+            removePendingForeshadowing(activeChapterId, hint.clueId);
+          }
+        }
+      }
       setSaving(false);
     }, 400);
   };
+
+  useEffect(() => {
+    if (!activeChapterId || !activeChapter) return;
+    const pending = pendingForeshadowing[activeChapterId];
+    if (!pending || pending.length === 0) return;
+
+    const allClueIds = new Set<string>();
+    for (const sc of activeChapter.scenes) {
+      for (const cid of sc.referencedClueIds) {
+        allClueIds.add(cid);
+      }
+    }
+
+    for (const hint of pending) {
+      if (allClueIds.has(hint.clueId)) {
+        removePendingForeshadowing(activeChapterId, hint.clueId);
+      }
+    }
+  }, [activeChapter?.scenes, activeChapterId, pendingForeshadowing, removePendingForeshadowing]);
 
   const handleSwitchChapter = (chId: string) => {
     setActiveChapterId(chId);
@@ -231,7 +264,7 @@ export default function Chapters() {
           <Sparkles className="w-4 h-4 text-frost-400 mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0">
             <div className="text-[12px] text-frost-300 font-body mb-1.5">
-              主笔建议在本章节铺垫以下线索，保存并校验后自动消除：
+              主笔建议在本章节铺垫以下线索，在场景中引用后自动消除：
             </div>
             <div className="flex flex-wrap gap-1.5">
               {pendingForeshadowing[activeChapterId].map((hint, idx) => (
