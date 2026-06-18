@@ -91,6 +91,9 @@ export interface ValidationIssue {
   suggestion?: string;
   sceneId?: string;
   choiceId?: string;
+  characterId?: string;
+  chapterId?: string;
+  quote?: string;
 }
 
 export const RULE_TYPE_LABEL: Record<RuleType, string> = {

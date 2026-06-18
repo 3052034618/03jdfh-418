@@ -3,7 +3,6 @@ import {
   BookOpen,
   Plus,
   Trash2,
-  Edit3,
   Save,
   AlertTriangle,
   AlertCircle,
@@ -15,24 +14,24 @@ import {
   User,
   Lock,
   Unlock,
-  RefreshCw,
   X,
   ArrowRight,
   Skull,
   Link2,
+  ShieldCheck,
+  Loader2,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import {
   CHAPTER_STATUS_LABEL,
-  RULE_TYPE_LABEL,
   VALIDATION_CATEGORY_LABEL,
+  SECRET_LEVEL_LABEL,
   type ChapterStatus,
   type Scene,
   type Choice,
   type ValidationIssue,
 } from '@/types';
 import { cn } from '@/lib/utils';
-import { useEffect } from 'react';
 
 const STATUS_OPTIONS: ChapterStatus[] = ['draft', 'writing', 'review', 'done'];
 
@@ -47,7 +46,7 @@ export default function Chapters() {
   const currentUser = writers.find((w) => w.id === currentUserId);
   const isLead = currentUser?.role === 'lead';
   const validationIssues = useAppStore((s) => s.validationIssues);
-  const runFullValidation = useAppStore((s) => s.runFullValidation);
+  const runChapterValidation = useAppStore((s) => s.runChapterValidation);
   const clearValidation = useAppStore((s) => s.clearValidation);
 
   const updateChapter = useAppStore((s) => s.updateChapter);
@@ -63,15 +62,11 @@ export default function Chapters() {
   const [activeChapterId, setActiveChapterId] = useState<string | null>(chapters[0]?.id ?? null);
   const [activeSceneId, setActiveSceneId] = useState<string | null>(null);
   const [expandedSceneIds, setExpandedSceneIds] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
 
   const activeChapter = useMemo(
     () => chapters.find((ch) => ch.id === activeChapterId) ?? null,
     [chapters, activeChapterId],
-  );
-
-  const activeScene = useMemo(
-    () => activeChapter?.scenes.find((s) => s.id === activeSceneId) ?? null,
-    [activeChapter, activeSceneId],
   );
 
   const canEditChapter = (chId: string) => {
@@ -80,32 +75,36 @@ export default function Chapters() {
     return ch?.writerId === currentUserId;
   };
 
-  const chapterIssues = useMemo(
-    () => validationIssues.filter((i) => activeChapter?.scenes.some((s) => s.id === i.sceneId)),
-    [validationIssues, activeChapter],
-  );
-
-  useEffect(() => {
-    if (!activeSceneId && activeChapter?.scenes[0]) {
-      setActiveSceneId(activeChapter.scenes[0].id);
-      setExpandedSceneIds(new Set([activeChapter.scenes[0].id]));
-    }
-  }, [activeChapter, activeSceneId]);
-
-  useEffect(() => {
-    if (chapters.length > 0 && !activeChapterId) {
-      setActiveChapterId(chapters[0].id);
-    }
-  }, [chapters, activeChapterId]);
-
-  const toggleScene = (id: string) => {
-    setExpandedSceneIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+  const chapterIssues = useMemo(() => {
+    if (!activeChapter) return [];
+    const sceneIds = new Set(activeChapter.scenes.map((s) => s.id));
+    return validationIssues.filter((i) => {
+      if (i.category === 'foreshadowing') return true;
+      return i.sceneId && sceneIds.has(i.sceneId);
     });
-    setActiveSceneId(id);
+  }, [validationIssues, activeChapter]);
+
+  const chapterIssueStats = useMemo(() => {
+    const errors = chapterIssues.filter((i) => i.type === 'error').length;
+    const warnings = chapterIssues.filter((i) => i.type === 'warning').length;
+    const infos = chapterIssues.filter((i) => i.type === 'info').length;
+    return { errors, warnings, infos, total: chapterIssues.length };
+  }, [chapterIssues]);
+
+  const handleSaveAndValidate = () => {
+    if (!activeChapterId) return;
+    setSaving(true);
+    setTimeout(() => {
+      runChapterValidation(activeChapterId);
+      setSaving(false);
+    }, 400);
+  };
+
+  const handleSwitchChapter = (chId: string) => {
+    setActiveChapterId(chId);
+    setActiveSceneId(null);
+    setExpandedSceneIds(new Set());
+    clearValidation();
   };
 
   const handleAddScene = () => {
@@ -127,10 +126,6 @@ export default function Chapters() {
     });
   };
 
-  const handleValidate = () => {
-    runFullValidation();
-  };
-
   const canEdit = activeChapter ? canEditChapter(activeChapter.id) : false;
 
   return (
@@ -140,32 +135,56 @@ export default function Chapters() {
           <BookOpen className="w-5 h-5 text-blood-500" />
           <div>
             <h2 className="font-display text-lg text-ash-100 tracking-wider">章节编辑</h2>
-            <p className="text-[11px] text-ash-600 font-body">选择章节进行场景与分支编辑，系统自动校验剧情一致性</p>
+            <p className="text-[11px] text-ash-600 font-body">编辑场景与分支后点「保存并校验」即时获取反馈</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleValidate}
-            className="btn-ghost flex items-center gap-1.5 !text-xs"
-          >
-            <RefreshCw className="w-3 h-3" /> 运行校验
-          </button>
-          {validationIssues.length > 0 && (
+          {activeChapterId && (
+            <button
+              onClick={handleSaveAndValidate}
+              disabled={saving}
+              className={cn(
+                'btn-primary flex items-center gap-1.5',
+                saving && 'opacity-70 cursor-wait',
+              )}
+            >
+              {saving ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <ShieldCheck className="w-3.5 h-3.5" />
+              )}
+              {saving ? '校验中…' : '保存并校验'}
+            </button>
+          )}
+          {chapterIssueStats.total > 0 && (
             <button onClick={clearValidation} className="btn-ghost flex items-center gap-1.5 !text-xs">
               <X className="w-3 h-3" /> 清除
             </button>
           )}
-          {validationIssues.length > 0 ? (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blood-900/40 border border-blood-700/60 text-[11px] text-blood-300 font-body">
-              <AlertTriangle className="w-3 h-3" />
-              {validationIssues.length} 个问题
+          {chapterIssueStats.total > 0 ? (
+            <div className="flex items-center gap-2">
+              {chapterIssueStats.errors > 0 && (
+                <span className="flex items-center gap-1 px-2 py-1 bg-blood-900/40 border border-blood-700/60 text-[10px] text-blood-300 font-body">
+                  <AlertTriangle className="w-2.5 h-2.5" />{chapterIssueStats.errors} 错误
+                </span>
+              )}
+              {chapterIssueStats.warnings > 0 && (
+                <span className="flex items-center gap-1 px-2 py-1 bg-ember-800/30 border border-ember-700/50 text-[10px] text-ember-600 font-body">
+                  <AlertCircle className="w-2.5 h-2.5" />{chapterIssueStats.warnings} 警告
+                </span>
+              )}
+              {chapterIssueStats.infos > 0 && (
+                <span className="flex items-center gap-1 px-2 py-1 bg-void-800/30 border border-void-700/50 text-[10px] text-frost-500 font-body">
+                  <Info className="w-2.5 h-2.5" />{chapterIssueStats.infos} 提示
+                </span>
+              )}
             </div>
-          ) : (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-verdant-800/30 border border-verdant-700/50 text-[11px] text-verdant-500 font-body">
+          ) : validationIssues.length === 0 ? (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-ink-800/60 border border-ink-600 text-[11px] text-ash-500 font-body">
               <CheckCircle2 className="w-3 h-3" />
-              未检测到问题
+              点击「保存并校验」检测剧情一致性
             </div>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -180,14 +199,14 @@ export default function Chapters() {
               const isMine = ch.writerId === currentUserId;
               const isActive = ch.id === activeChapterId;
               const editable = canEditChapter(ch.id);
+              const chIssueCount = validationIssues.filter((i) => {
+                if (i.category === 'foreshadowing') return false;
+                return ch.scenes.some((s) => s.id === i.sceneId);
+              }).length;
               return (
                 <button
                   key={ch.id}
-                  onClick={() => {
-                    setActiveChapterId(ch.id);
-                    setActiveSceneId(null);
-                    setExpandedSceneIds(new Set());
-                  }}
+                  onClick={() => handleSwitchChapter(ch.id)}
                   className={cn(
                     'w-full text-left px-3 py-2.5 rounded-sm border transition-all duration-200',
                     isActive
@@ -202,8 +221,15 @@ export default function Chapters() {
                     )}>
                       {ch.title}
                     </span>
-                    {!editable && <Lock className="w-3 h-3 text-ash-600 shrink-0" />}
-                    {editable && isMine && <Unlock className="w-3 h-3 text-verdant-500/70 shrink-0" />}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {chIssueCount > 0 && !isActive && (
+                        <span className="text-[9px] px-1 py-0.5 bg-blood-900/40 text-blood-400 border border-blood-800/50 font-body">
+                          {chIssueCount}
+                        </span>
+                      )}
+                      {!editable && <Lock className="w-3 h-3 text-ash-600" />}
+                      {editable && isMine && <Unlock className="w-3 h-3 text-verdant-500/70" />}
+                    </div>
                   </div>
                   <div className="flex items-center justify-between mt-1.5 gap-2">
                     <span className="text-[10px] text-ash-600 font-body flex items-center gap-1">
@@ -302,19 +328,27 @@ export default function Chapters() {
 
                 {activeChapter.scenes.map((scene, idx) => {
                   const isExpanded = expandedSceneIds.has(scene.id);
-                  const isActiveScene = scene.id === activeSceneId;
-                  const sceneIssueCount = validationIssues.filter((i) => i.sceneId === scene.id).length;
+                  const sceneIssueCount = chapterIssues.filter((i) => i.sceneId === scene.id).length;
+                  const sceneErrorCount = chapterIssues.filter((i) => i.sceneId === scene.id && i.type === 'error').length;
                   return (
                     <div
                       key={scene.id}
                       className={cn(
                         'card-dark animate-fade-in',
-                        isActiveScene && 'border-blood-600/50 shadow-glow-blood-sm',
+                        sceneErrorCount > 0 && 'border-blood-700/50',
                       )}
                     >
                       <div
                         className="flex items-center gap-3 px-5 py-3.5 cursor-pointer hover:bg-ink-700/30 transition-colors"
-                        onClick={() => toggleScene(scene.id)}
+                        onClick={() => {
+                          setExpandedSceneIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(scene.id)) next.delete(scene.id);
+                            else next.add(scene.id);
+                            return next;
+                          });
+                          setActiveSceneId(scene.id);
+                        }}
                       >
                         {isExpanded ? (
                           <ChevronDown className="w-4 h-4 text-ash-500 shrink-0" />
@@ -324,8 +358,14 @@ export default function Chapters() {
                         <span className="font-display text-xs text-blood-500/80 w-6">#{idx + 1}</span>
                         <h4 className="flex-1 text-sm text-ash-200 font-body truncate">{scene.title}</h4>
                         {sceneIssueCount > 0 && (
-                          <span className="flex items-center gap-1 px-2 py-0.5 bg-blood-900/40 border border-blood-700/60 text-[10px] text-blood-300 font-body">
-                            <AlertTriangle className="w-2.5 h-2.5" /> {sceneIssueCount}
+                          <span className={cn(
+                            'flex items-center gap-1 px-2 py-0.5 text-[10px] font-body',
+                            sceneErrorCount > 0
+                              ? 'bg-blood-900/40 border border-blood-700/60 text-blood-300'
+                              : 'bg-ember-800/30 border border-ember-700/50 text-ember-600',
+                          )}>
+                            {sceneErrorCount > 0 ? <AlertTriangle className="w-2.5 h-2.5" /> : <AlertCircle className="w-2.5 h-2.5" />}
+                            {sceneIssueCount}
                           </span>
                         )}
                         <span className="text-[10px] text-ash-600 font-body">
@@ -349,7 +389,7 @@ export default function Chapters() {
                           updateChoice={updateChoice}
                           deleteChoice={deleteChoice}
                           handleAddChoice={handleAddChoice}
-                          issues={validationIssues.filter((i) => i.sceneId === scene.id)}
+                          issues={chapterIssues.filter((i) => i.sceneId === scene.id)}
                         />
                       )}
                     </div>
@@ -374,21 +414,32 @@ export default function Chapters() {
           <div className="p-3 border-b border-ink-700/60 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-blood-500" />
-              <h3 className="font-display text-sm text-ash-200 tracking-wider">剧情校验</h3>
+              <h3 className="font-display text-sm text-ash-200 tracking-wider">
+                {activeChapter ? `「${activeChapter.title.slice(0, 8)}」校验` : '剧情校验'}
+              </h3>
             </div>
-            {validationIssues.length > 0 && (
-              <span className="text-[11px] text-blood-400 font-body">{validationIssues.length}</span>
+            {chapterIssueStats.total > 0 && (
+              <span className={cn(
+                'text-[11px] font-body',
+                chapterIssueStats.errors > 0 ? 'text-blood-400' : 'text-ember-600',
+              )}>
+                {chapterIssueStats.total}
+              </span>
             )}
           </div>
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {validationIssues.length === 0 ? (
+            {chapterIssues.length === 0 ? (
               <div className="text-center py-8 text-ash-600">
                 <CheckCircle2 className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                <p className="text-xs font-body">点击上方「运行校验」检测剧情一致性</p>
+                <p className="text-xs font-body">
+                  {validationIssues.length === 0
+                    ? '点击上方「保存并校验」检测剧情一致性'
+                    : '当前章节未检测到问题'}
+                </p>
               </div>
             ) : (
-              validationIssues.map((issue) => (
-                <ValidationItem key={issue.id} issue={issue} chapters={chapters} />
+              chapterIssues.map((issue) => (
+                <ValidationItem key={issue.id} issue={issue} chapters={chapters} characters={characters} />
               ))
             )}
           </div>
@@ -454,16 +505,21 @@ function SceneEditor({
   return (
     <div className="px-5 pb-5 border-t border-ink-700/50 pt-4 animate-fade-in">
       {issues.length > 0 && (
-        <div className="mb-4 p-3 bg-blood-900/20 border border-blood-800/50 space-y-1.5">
+        <div className="mb-4 p-3 bg-blood-900/20 border border-blood-800/50 space-y-2">
           {issues.map((iss) => (
             <div key={iss.id} className="flex items-start gap-2 text-[12px]">
               {iss.type === 'error' && <AlertTriangle className="w-3.5 h-3.5 text-blood-400 mt-0.5 shrink-0" />}
               {iss.type === 'warning' && <AlertCircle className="w-3.5 h-3.5 text-ember-600 mt-0.5 shrink-0" />}
               {iss.type === 'info' && <Info className="w-3.5 h-3.5 text-frost-500 mt-0.5 shrink-0" />}
-              <div>
+              <div className="min-w-0">
                 <div className="text-ash-300 font-body">
                   <span className="text-ash-600">[{VALIDATION_CATEGORY_LABEL[iss.category]}]</span> {iss.message}
                 </div>
+                {iss.quote && (
+                  <div className="mt-1 px-2 py-1 bg-ink-900/80 border border-ink-600/50 text-[11px] text-ember-600 font-body italic truncate">
+                    「{iss.quote.length > 60 ? iss.quote.slice(0, 60) + '…' : iss.quote}」
+                  </div>
+                )}
                 {iss.suggestion && (
                   <div className="text-ash-500 text-[11px] mt-0.5">建议：{iss.suggestion}</div>
                 )}
@@ -498,7 +554,7 @@ function SceneEditor({
           <div>
             <label className="label-dark flex items-center gap-1.5"><User className="w-3 h-3" />出场角色</label>
             <div className="flex flex-wrap gap-1">
-              {characters.map((c) => {
+              {characters.map((c: any) => {
                 const active = scene.characterIds.includes(c.id);
                 return (
                   <button
@@ -513,6 +569,9 @@ function SceneEditor({
                     )}
                   >
                     {c.name}
+                    {c.secretLevel <= 1 && !c.knowsTruth && (
+                      <span className="ml-0.5 text-[9px] opacity-50">⚠</span>
+                    )}
                   </button>
                 );
               })}
@@ -521,7 +580,7 @@ function SceneEditor({
           <div>
             <label className="label-dark flex items-center gap-1.5"><Skull className="w-3 h-3" />引用诅咒规则</label>
             <div className="flex flex-wrap gap-1">
-              {rules.map((r) => {
+              {rules.map((r: any) => {
                 const active = scene.referencedRuleIds.includes(r.id);
                 return (
                   <button
@@ -545,7 +604,7 @@ function SceneEditor({
           <div>
             <label className="label-dark flex items-center gap-1.5"><Link2 className="w-3 h-3" />引用线索</label>
             <div className="flex flex-wrap gap-1">
-              {clues.map((cl) => {
+              {clues.map((cl: any) => {
                 const active = scene.referencedClueIds.includes(cl.id);
                 return (
                   <button
@@ -696,7 +755,7 @@ function ChoiceEditor({
               </select>
             </div>
           </div>
-          {choice.unlockCondition !== undefined && (
+          {choice.unlockCondition !== undefined && choice.unlockCondition !== '' && (
             <input
               value={choice.unlockCondition ?? ''}
               onChange={(e) => canEdit && updateChoice(chapterId, sceneId, choice.id, { unlockCondition: e.target.value })}
@@ -719,7 +778,7 @@ function ChoiceEditor({
   );
 }
 
-function ValidationItem({ issue, chapters }: { issue: ValidationIssue; chapters: any[] }) {
+function ValidationItem({ issue, chapters, characters }: { issue: ValidationIssue; chapters: any[]; characters: any[] }) {
   const sceneTitle = useMemo(() => {
     for (const ch of chapters) {
       const sc = ch.scenes?.find((s: Scene) => s.id === issue.sceneId);
@@ -727,6 +786,12 @@ function ValidationItem({ issue, chapters }: { issue: ValidationIssue; chapters:
     }
     return null;
   }, [issue.sceneId, chapters]);
+
+  const charName = useMemo(() => {
+    if (!issue.characterId) return null;
+    const ch = characters.find((c: any) => c.id === issue.characterId);
+    return ch?.name ?? null;
+  }, [issue.characterId, characters]);
 
   return (
     <div className={cn(
@@ -739,16 +804,28 @@ function ValidationItem({ issue, chapters }: { issue: ValidationIssue; chapters:
         {issue.type === 'error' && <AlertTriangle className="w-3 h-3 text-blood-400 mt-0.5 shrink-0" />}
         {issue.type === 'warning' && <AlertCircle className="w-3 h-3 text-ember-600 mt-0.5 shrink-0" />}
         {issue.type === 'info' && <Info className="w-3 h-3 text-frost-500 mt-0.5 shrink-0" />}
-        <span className={cn(
-          'text-[10px] font-body uppercase tracking-wider',
-          issue.type === 'error' && 'text-blood-400',
-          issue.type === 'warning' && 'text-ember-600',
-          issue.type === 'info' && 'text-frost-500',
-        )}>
-          {VALIDATION_CATEGORY_LABEL[issue.category]}
-        </span>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className={cn(
+            'text-[10px] font-body uppercase tracking-wider',
+            issue.type === 'error' && 'text-blood-400',
+            issue.type === 'warning' && 'text-ember-600',
+            issue.type === 'info' && 'text-frost-500',
+          )}>
+            {VALIDATION_CATEGORY_LABEL[issue.category]}
+          </span>
+          {charName && (
+            <span className="text-[10px] px-1 py-0.5 bg-blood-900/40 text-blood-300 border border-blood-800/50 font-body">
+              {charName}
+            </span>
+          )}
+        </div>
       </div>
       <p className="text-[12px] text-ash-300 font-body leading-relaxed">{issue.message}</p>
+      {issue.quote && (
+        <div className="mt-1.5 px-2 py-1 bg-ink-900/80 border border-ink-600/50 text-[11px] text-ember-600 font-body italic">
+          「{issue.quote.length > 80 ? issue.quote.slice(0, 80) + '…' : issue.quote}」
+        </div>
+      )}
       {issue.suggestion && (
         <p className="text-[11px] text-ash-600 mt-1 font-body leading-relaxed">→ {issue.suggestion}</p>
       )}

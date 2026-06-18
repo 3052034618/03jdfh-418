@@ -71,6 +71,7 @@ interface AppState {
   deleteEnding: (id: string) => void;
 
   runFullValidation: () => void;
+  runChapterValidation: (chapterId: string) => void;
   clearValidation: () => void;
 }
 
@@ -259,6 +260,24 @@ export const useAppStore = create<AppState>()(
         const state = get();
         const issues = runValidation(state);
         set({ validationIssues: issues });
+      },
+      runChapterValidation: (chapterId: string) => {
+        const state = get();
+        const allIssues = runValidation(state);
+        const chapter = state.chapters.find((ch) => ch.id === chapterId);
+        const sceneIds = new Set(chapter?.scenes.map((s) => s.id) ?? []);
+        const chapterIssueIds = new Set(
+          allIssues.filter((i) => i.sceneId && sceneIds.has(i.sceneId)).map((i) => i.id),
+        );
+        const foreshadowIssues = allIssues.filter((i) => i.category === 'foreshadowing');
+        for (const fi of foreshadowIssues) {
+          chapterIssueIds.add(fi.id);
+        }
+        const otherIssues = state.validationIssues.filter(
+          (i) => !i.sceneId || !sceneIds.has(i.sceneId),
+        );
+        const newChapterIssues = allIssues.filter((i) => chapterIssueIds.has(i.id));
+        set({ validationIssues: [...otherIssues.filter((i) => i.category !== 'foreshadowing'), ...newChapterIssues] });
       },
       clearValidation: () => set({ validationIssues: [] }),
     }),

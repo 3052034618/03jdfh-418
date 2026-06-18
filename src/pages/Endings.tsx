@@ -24,6 +24,7 @@ import {
   type EndingStatus,
   type Ending,
 } from '@/types';
+import { buildClueRevelationMap, type ClueRevelationInfo } from '@/utils/validation';
 import { cn } from '@/lib/utils';
 
 const ENDING_TYPES: { type: EndingType; label: string; color: string; glow: string; accent: string }[] = [
@@ -131,15 +132,9 @@ export default function Endings() {
 
   const getChapterTitle = (id?: string) => chapters.find((c) => c.id === id)?.title ?? '未指定';
 
-  const revealedClueIds = useMemo(() => {
-    const set = new Set<string>();
-    for (const ch of chapters) {
-      for (const sc of ch.scenes) {
-        sc.referencedClueIds.forEach((id) => set.add(id));
-      }
-    }
-    return set;
-  }, [chapters]);
+  const clueRevelationMap = useMemo(() => {
+    return buildClueRevelationMap(chapters, clues);
+  }, [chapters, clues]);
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -242,7 +237,7 @@ export default function Endings() {
             const isExpanded = expandedIds.has(ending.id);
             const isEditing = editingId === ending.id;
             const et = ENDING_TYPES.find((x) => x.type === ending.type)!;
-            const missingClues = ending.requiredClueIds.filter((id) => !revealedClueIds.has(id));
+            const missingClues = ending.requiredClueIds.filter((id) => !clueRevelationMap.get(id)?.isRevealed);
             return (
               <div
                 key={ending.id}
@@ -321,7 +316,7 @@ export default function Endings() {
                         ending={ending}
                         clues={clues}
                         missingClues={missingClues}
-                        revealedClueIds={revealedClueIds}
+                        clueRevelationMap={clueRevelationMap}
                         isLead={!!isLead}
                         onSetStatus={(s) => setEndingStatus(ending.id, s)}
                       />
@@ -357,12 +352,12 @@ interface EndingDetailProps {
   ending: Ending;
   clues: any[];
   missingClues: string[];
-  revealedClueIds: Set<string>;
+  clueRevelationMap: Map<string, ClueRevelationInfo>;
   isLead: boolean;
   onSetStatus: (s: EndingStatus) => void;
 }
 
-function EndingDetail({ ending, clues, missingClues, revealedClueIds, isLead, onSetStatus }: EndingDetailProps) {
+function EndingDetail({ ending, clues, missingClues, clueRevelationMap, isLead, onSetStatus }: EndingDetailProps) {
   return (
     <div className="space-y-4">
       <div>
@@ -385,26 +380,52 @@ function EndingDetail({ ending, clues, missingClues, revealedClueIds, isLead, on
             {ending.requiredClueIds.length === 0 ? (
               <p className="text-sm text-ash-600 font-body">（无需特定线索）</p>
             ) : (
-              <div className="flex flex-wrap gap-1.5">
+              <div className="space-y-2">
                 {ending.requiredClueIds.map((cid) => {
                   const clue = clues.find((c) => c.id === cid);
-                  const revealed = revealedClueIds.has(cid);
+                  const info = clueRevelationMap.get(cid);
                   const isMissing = missingClues.includes(cid);
                   return (
-                    <span
+                    <div
                       key={cid}
                       className={cn(
-                        'inline-flex items-center gap-1 px-2 py-1 text-[11px] font-body border',
-                        revealed && !isMissing
-                          ? 'bg-verdant-800/30 text-verdant-500 border-verdant-700/50'
-                          : 'bg-blood-900/30 text-blood-400 border-blood-700/60',
+                        'px-3 py-2 border text-[12px] font-body',
+                        isMissing
+                          ? 'bg-blood-900/20 border-blood-700/60'
+                          : 'bg-verdant-800/10 border-verdant-700/40',
                       )}
-                      title={clue?.content}
                     >
-                      {revealed ? <Check className="w-2.5 h-2.5" /> : <XCircle className="w-2.5 h-2.5" />}
-                      {clue?.name ?? cid}
-                      <span className="opacity-60">[{clue?.level}]</span>
-                    </span>
+                      <div className="flex items-center gap-2 mb-1">
+                        {isMissing ? (
+                          <XCircle className="w-3 h-3 text-blood-400 shrink-0" />
+                        ) : (
+                          <Check className="w-3 h-3 text-verdant-500 shrink-0" />
+                        )}
+                        <span className={cn(
+                          'font-body',
+                          isMissing ? 'text-blood-400' : 'text-verdant-500',
+                        )}>
+                          {clue?.name ?? cid}
+                        </span>
+                        <span className="opacity-50 text-[10px]">[{clue?.level}]</span>
+                      </div>
+                      {info && info.isRevealed && info.revealedInChapters.length > 0 && (
+                        <div className="ml-5 text-[11px] text-ash-500 space-y-0.5">
+                          <span className="text-ash-600">已出现在：</span>
+                          {info.revealedInChapters.map((r, idx) => (
+                            <div key={idx} className="ml-2 flex items-center gap-1">
+                              <span className="w-1 h-1 rounded-full bg-verdant-500/60" />
+                              <span>{r.chapterTitle} · {r.sceneTitle}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {isMissing && (
+                        <div className="ml-5 text-[11px] text-blood-400/70">
+                          尚未在任何章节中出现，需在进入此结局前铺垫
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
               </div>
