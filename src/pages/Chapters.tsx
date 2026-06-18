@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   BookOpen,
   Plus,
@@ -20,16 +20,22 @@ import {
   Link2,
   ShieldCheck,
   Loader2,
+  Check,
+  EyeOff,
+  MessageSquare,
+  Filter,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import {
   CHAPTER_STATUS_LABEL,
   VALIDATION_CATEGORY_LABEL,
   SECRET_LEVEL_LABEL,
+  ISSUE_STATUS_LABEL,
   type ChapterStatus,
   type Scene,
   type Choice,
   type ValidationIssue,
+  type IssueStatus,
 } from '@/types';
 import { cn } from '@/lib/utils';
 
@@ -48,6 +54,7 @@ export default function Chapters() {
   const validationIssues = useAppStore((s) => s.validationIssues);
   const runChapterValidation = useAppStore((s) => s.runChapterValidation);
   const clearValidation = useAppStore((s) => s.clearValidation);
+  const setIssueStatus = useAppStore((s) => s.setIssueStatus);
 
   const updateChapter = useAppStore((s) => s.updateChapter);
   const setChapterWriter = useAppStore((s) => s.setChapterWriter);
@@ -63,6 +70,7 @@ export default function Chapters() {
   const [activeSceneId, setActiveSceneId] = useState<string | null>(null);
   const [expandedSceneIds, setExpandedSceneIds] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<IssueStatus | 'all'>('all');
 
   const activeChapter = useMemo(
     () => chapters.find((ch) => ch.id === activeChapterId) ?? null,
@@ -79,17 +87,28 @@ export default function Chapters() {
     if (!activeChapter) return [];
     const sceneIds = new Set(activeChapter.scenes.map((s) => s.id));
     return validationIssues.filter((i) => {
+      if (statusFilter !== 'all' && i.status !== statusFilter) return false;
       if (i.category === 'foreshadowing') return true;
       return i.sceneId && sceneIds.has(i.sceneId);
     });
-  }, [validationIssues, activeChapter]);
+  }, [validationIssues, activeChapter, statusFilter]);
 
   const chapterIssueStats = useMemo(() => {
-    const errors = chapterIssues.filter((i) => i.type === 'error').length;
-    const warnings = chapterIssues.filter((i) => i.type === 'warning').length;
-    const infos = chapterIssues.filter((i) => i.type === 'info').length;
-    return { errors, warnings, infos, total: chapterIssues.length };
-  }, [chapterIssues]);
+    if (!activeChapter) return { errors: 0, warnings: 0, infos: 0, total: 0, open: 0, fixed: 0, ignored: 0, needsLead: 0 };
+    const sceneIds = new Set(activeChapter.scenes.map((s) => s.id));
+    const allIssues = validationIssues.filter((i) => {
+      if (i.category === 'foreshadowing') return true;
+      return i.sceneId && sceneIds.has(i.sceneId);
+    });
+    const errors = allIssues.filter((i) => i.type === 'error').length;
+    const warnings = allIssues.filter((i) => i.type === 'warning').length;
+    const infos = allIssues.filter((i) => i.type === 'info').length;
+    const open = allIssues.filter((i) => i.status === 'open').length;
+    const fixed = allIssues.filter((i) => i.status === 'fixed').length;
+    const ignored = allIssues.filter((i) => i.status === 'ignored').length;
+    const needsLead = allIssues.filter((i) => i.status === 'needs-lead').length;
+    return { errors, warnings, infos, total: allIssues.length, open, fixed, ignored, needsLead };
+  }, [validationIssues, activeChapter]);
 
   const handleSaveAndValidate = () => {
     if (!activeChapterId) return;
@@ -127,6 +146,22 @@ export default function Chapters() {
   };
 
   const canEdit = activeChapter ? canEditChapter(activeChapter.id) : false;
+
+  useEffect(() => {
+    const handleJump = (e: Event) => {
+      const { chapterId, sceneId } = (e as CustomEvent).detail;
+      if (chapterId) {
+        setActiveChapterId(chapterId);
+        setExpandedSceneIds(new Set());
+        if (sceneId) {
+          setActiveSceneId(sceneId);
+          setExpandedSceneIds(new Set([sceneId]));
+        }
+      }
+    };
+    window.addEventListener('jump-to-scene', handleJump);
+    return () => window.removeEventListener('jump-to-scene', handleJump);
+  }, []);
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -411,21 +446,39 @@ export default function Chapters() {
         </div>
 
         <div className="w-80 shrink-0 border-l border-ink-700/60 bg-ink-900/40 flex flex-col min-h-0">
-          <div className="p-3 border-b border-ink-700/60 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-blood-500" />
-              <h3 className="font-display text-sm text-ash-200 tracking-wider">
-                {activeChapter ? `「${activeChapter.title.slice(0, 8)}」校验` : '剧情校验'}
-              </h3>
+          <div className="p-3 border-b border-ink-700/60">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-blood-500" />
+                <h3 className="font-display text-sm text-ash-200 tracking-wider">
+                  {activeChapter ? `「${activeChapter.title.slice(0, 8)}」校验` : '剧情校验'}
+                </h3>
+              </div>
+              {chapterIssueStats.total > 0 && (
+                <span className={cn(
+                  'text-[11px] font-body',
+                  chapterIssueStats.errors > 0 ? 'text-blood-400' : 'text-ember-600',
+                )}>
+                  {chapterIssueStats.total}
+                </span>
+              )}
             </div>
-            {chapterIssueStats.total > 0 && (
-              <span className={cn(
-                'text-[11px] font-body',
-                chapterIssueStats.errors > 0 ? 'text-blood-400' : 'text-ember-600',
-              )}>
-                {chapterIssueStats.total}
-              </span>
-            )}
+            <div className="flex items-center gap-1">
+              {(['all', 'open', 'fixed', 'ignored', 'needs-lead'] as const).map((st) => (
+                <button
+                  key={st}
+                  onClick={() => setStatusFilter(st)}
+                  className={cn(
+                    'px-1.5 py-0.5 text-[10px] font-body border transition-all',
+                    statusFilter === st
+                      ? 'bg-blood-900/40 border-blood-700/60 text-blood-300'
+                      : 'bg-ink-800/30 border-ink-700/40 text-ash-500 hover:border-ink-600',
+                  )}
+                >
+                  {st === 'all' ? `全部(${chapterIssueStats.total})` : `${ISSUE_STATUS_LABEL[st]}(${chapterIssueStats[st]})`}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
             {chapterIssues.length === 0 ? (
@@ -439,7 +492,14 @@ export default function Chapters() {
               </div>
             ) : (
               chapterIssues.map((issue) => (
-                <ValidationItem key={issue.id} issue={issue} chapters={chapters} characters={characters} />
+                <ValidationItem
+                  key={issue.id}
+                  issue={issue}
+                  chapters={chapters}
+                  characters={characters}
+                  setIssueStatus={setIssueStatus}
+                  isLead={isLead}
+                />
               ))
             )}
           </div>
@@ -778,7 +838,19 @@ function ChoiceEditor({
   );
 }
 
-function ValidationItem({ issue, chapters, characters }: { issue: ValidationIssue; chapters: any[]; characters: any[] }) {
+function ValidationItem({
+  issue,
+  chapters,
+  characters,
+  setIssueStatus,
+  isLead,
+}: {
+  issue: ValidationIssue;
+  chapters: any[];
+  characters: any[];
+  setIssueStatus: (id: string, status: IssueStatus) => void;
+  isLead: boolean;
+}) {
   const sceneTitle = useMemo(() => {
     for (const ch of chapters) {
       const sc = ch.scenes?.find((s: Scene) => s.id === issue.sceneId);
@@ -793,9 +865,31 @@ function ValidationItem({ issue, chapters, characters }: { issue: ValidationIssu
     return ch?.name ?? null;
   }, [issue.characterId, characters]);
 
+  const statusButton = (
+    status: IssueStatus,
+    icon: React.ReactNode,
+    label: string,
+    colorClass: string,
+  ) => (
+    <button
+      onClick={() => setIssueStatus(issue.id, status)}
+      title={label}
+      className={cn(
+        'p-0.5 rounded transition-all',
+        issue.status === status
+          ? colorClass
+          : 'text-ash-600 hover:text-ash-300 hover:bg-ink-700/50',
+      )}
+    >
+      {icon}
+    </button>
+  );
+
   return (
     <div className={cn(
       'p-2.5 border-l-2 animate-fade-in',
+      issue.status === 'fixed' && 'opacity-60',
+      issue.status === 'ignored' && 'opacity-40',
       issue.type === 'error' && 'bg-blood-900/20 border-blood-600 border-r border-t border-b border-blood-900/40',
       issue.type === 'warning' && 'bg-ember-800/15 border-ember-600 border-r border-t border-b border-ember-900/30',
       issue.type === 'info' && 'bg-void-800/20 border-frost-600 border-r border-t border-b border-void-800/40',
@@ -804,26 +898,42 @@ function ValidationItem({ issue, chapters, characters }: { issue: ValidationIssu
         {issue.type === 'error' && <AlertTriangle className="w-3 h-3 text-blood-400 mt-0.5 shrink-0" />}
         {issue.type === 'warning' && <AlertCircle className="w-3 h-3 text-ember-600 mt-0.5 shrink-0" />}
         {issue.type === 'info' && <Info className="w-3 h-3 text-frost-500 mt-0.5 shrink-0" />}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className={cn(
-            'text-[10px] font-body uppercase tracking-wider',
-            issue.type === 'error' && 'text-blood-400',
-            issue.type === 'warning' && 'text-ember-600',
-            issue.type === 'info' && 'text-frost-500',
-          )}>
-            {VALIDATION_CATEGORY_LABEL[issue.category]}
-          </span>
-          {charName && (
-            <span className="text-[10px] px-1 py-0.5 bg-blood-900/40 text-blood-300 border border-blood-800/50 font-body">
-              {charName}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className={cn(
+              'text-[10px] font-body uppercase tracking-wider',
+              issue.type === 'error' && 'text-blood-400',
+              issue.type === 'warning' && 'text-ember-600',
+              issue.type === 'info' && 'text-frost-500',
+            )}>
+              {VALIDATION_CATEGORY_LABEL[issue.category]}
             </span>
-          )}
+            {charName && (
+              <span className="text-[10px] px-1 py-0.5 bg-blood-900/40 text-blood-300 border border-blood-800/50 font-body">
+                {charName}
+              </span>
+            )}
+            {issue.secretTopic && (
+              <span className="text-[10px] px-1 py-0.5 bg-void-800/40 text-frost-400 border border-void-700/50 font-body">
+                🔒 {issue.secretTopic}
+              </span>
+            )}
+            <span className={cn(
+              'text-[10px] px-1 py-0.5 font-body ml-auto',
+              issue.status === 'open' && 'bg-blood-900/30 text-blood-400 border border-blood-800/40',
+              issue.status === 'fixed' && 'bg-verdant-800/30 text-verdant-500 border border-verdant-700/40',
+              issue.status === 'ignored' && 'bg-ink-700/50 text-ash-500 border border-ink-600',
+              issue.status === 'needs-lead' && 'bg-ember-800/30 text-ember-500 border border-ember-700/40',
+            )}>
+              {ISSUE_STATUS_LABEL[issue.status]}
+            </span>
+          </div>
         </div>
       </div>
       <p className="text-[12px] text-ash-300 font-body leading-relaxed">{issue.message}</p>
       {issue.quote && (
         <div className="mt-1.5 px-2 py-1 bg-ink-900/80 border border-ink-600/50 text-[11px] text-ember-600 font-body italic">
-          「{issue.quote.length > 80 ? issue.quote.slice(0, 80) + '…' : issue.quote}」
+          「{issue.quote.length > 120 ? issue.quote.slice(0, 120) + '…' : issue.quote}」
         </div>
       )}
       {issue.suggestion && (
@@ -832,6 +942,17 @@ function ValidationItem({ issue, chapters, characters }: { issue: ValidationIssu
       {sceneTitle && (
         <p className="text-[10px] text-ash-600 mt-1.5 font-body">📍 {sceneTitle}</p>
       )}
+      <div className="flex items-center gap-1 mt-2 pt-2 border-t border-ink-700/40">
+        <span className="text-[10px] text-ash-600 font-body mr-1">标记：</span>
+        {statusButton('fixed', <Check className="w-3 h-3" />, '已改', 'text-verdant-500 bg-verdant-800/30')}
+        {statusButton('ignored', <EyeOff className="w-3 h-3" />, '忽略', 'text-ash-400 bg-ink-700/60')}
+        {statusButton('needs-lead', <MessageSquare className="w-3 h-3" />, '待主笔确认', 'text-ember-500 bg-ember-800/30')}
+        {isLead && issue.status === 'needs-lead' && (
+          <span className="text-[10px] text-ember-500 font-body ml-auto">
+            ⚑ 需您审阅
+          </span>
+        )}
+      </div>
     </div>
   );
 }

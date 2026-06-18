@@ -19,28 +19,31 @@ interface DialogueMatch {
 
 function extractDialogues(text: string, characters: Character[]): DialogueMatch[] {
   const results: DialogueMatch[] = [];
+  const sentenceEnd = '[。！？!?]';
 
   for (const char of characters) {
     const name = char.name;
 
     const colonPatterns = [
-      new RegExp(`${escapeRegex(name)}[：:]\\s*(.{1,80}?)`, 'g'),
-      new RegExp(`${escapeRegex(name)}说[：:]?\\s*[「"'"](.{1,80}?)[」"'"]`, 'g'),
-      new RegExp(`${escapeRegex(name)}说道[：:]?\\s*[「"'"](.{1,80}?)[」"'"]`, 'g'),
-      new RegExp(`${escapeRegex(name)}低声说[：:]?\\s*[「"'"](.{1,80}?)[」"'"]`, 'g'),
-      new RegExp(`${escapeRegex(name)}开口[：:]?\\s*[「"'"](.{1,80}?)[」"'"]`, 'g'),
-      new RegExp(`${escapeRegex(name)}回答[：:]?\\s*[「"'"](.{1,80}?)[」"'"]`, 'g'),
+      new RegExp(`${escapeRegex(name)}[：:]\\s*([^。！？!?]*?${sentenceEnd})`, 'g'),
+      new RegExp(`${escapeRegex(name)}说[：:]?\\s*[「"']([^」"']*?)[」"']`, 'g'),
+      new RegExp(`${escapeRegex(name)}说道[：:]?\\s*[「"']([^」"']*?)[」"']`, 'g'),
+      new RegExp(`${escapeRegex(name)}低声说[：:]?\\s*[「"']([^」"']*?)[」"']`, 'g'),
+      new RegExp(`${escapeRegex(name)}开口[：:]?\\s*[「"']([^」"']*?)[」"']`, 'g'),
+      new RegExp(`${escapeRegex(name)}回答[：:]?\\s*[「"']([^」"']*?)[」"']`, 'g'),
+      new RegExp(`${escapeRegex(name)}冷笑道[：:]?\\s*[「"']([^」"']*?)[」"']`, 'g'),
+      new RegExp(`${escapeRegex(name)}叹了口气[，。]?\\s*[「"']([^」"']*?)[」"']`, 'g'),
     ];
 
     for (const pattern of colonPatterns) {
       let match;
       while ((match = pattern.exec(text)) !== null) {
-        const content = match[1] || match[0];
-        if (content.trim()) {
+        const content = (match[1] || match[0]).trim();
+        if (content) {
           results.push({
             characterId: char.id,
             characterName: name,
-            content: content.trim(),
+            content,
             fullMatch: match[0].trim(),
           });
         }
@@ -48,18 +51,18 @@ function extractDialogues(text: string, characters: Character[]): DialogueMatch[
     }
 
     const quotedPatterns = [
-      new RegExp(`${escapeRegex(name)}[地的不]?[低轻缓急颤]\\s*声[说道着]+[，。！？]?\\s*[「"'"](.{1,80}?)[」"'"]`, 'g'),
-      new RegExp(`${escapeRegex(name)}[地的不]?[说道低喊叫嚷吼]\\s*[着了]?[，。！？]?\\s*[「"'"](.{1,80}?)[」"'"]`, 'g'),
+      new RegExp(`${escapeRegex(name)}[地的不]?[低轻缓急颤]\\s*声[说道着]+[，。！？]?\\s*[「"']([^」"']*?)[」"']`, 'g'),
+      new RegExp(`${escapeRegex(name)}[地的不]?[说道低喊叫嚷吼]\\s*[着了]?[，。！？]?\\s*[「"']([^」"']*?)[」"']`, 'g'),
     ];
     for (const pattern of quotedPatterns) {
       let match;
       while ((match = pattern.exec(text)) !== null) {
-        const content = match[1] || match[0];
-        if (content.trim()) {
+        const content = (match[1] || match[0]).trim();
+        if (content) {
           results.push({
             characterId: char.id,
             characterName: name,
-            content: content.trim(),
+            content,
             fullMatch: match[0].trim(),
           });
         }
@@ -137,7 +140,7 @@ function validateCharacterSecrets(
       if (dlg.content.includes(topic.keyword)) {
         const isHigh = topic.severity === 'high';
         const existing = issues.find(
-          (i) => i.sceneId === scene.id && i.characterId === char.id && i.type === 'error',
+          (i) => i.sceneId === scene.id && i.characterId === char.id && i.secretTopic === topic.keyword,
         );
         if (existing) continue;
         issues.push({
@@ -148,8 +151,11 @@ function validateCharacterSecrets(
           characterId: char.id,
           chapterId: scene.chapterId,
           quote: dlg.fullMatch,
-          message: `角色「${char.name}」（知情等级${char.secretLevel}）说出了"${topic.keyword}"相关内容`,
+          secretTopic: topic.keyword,
+          message: `角色「${char.name}」（知情等级${char.secretLevel}）说出了「${topic.keyword}」相关内容`,
           suggestion: `该角色目前仅为${char.secretLevel === 0 ? '完全不知情' : '略有怀疑'}，请确认此对话是否合理，或调整角色秘密等级`,
+          status: 'open',
+          statusUpdatedAt: Date.now(),
         });
         break;
       }
@@ -172,8 +178,11 @@ function validateCharacterSecrets(
       characterId: char.id,
       chapterId: scene.chapterId,
       quote: leak.fullMatch,
+      secretTopic: '旁白暗示知情',
       message: `旁白暗示角色「${char.name}」（知情等级${char.secretLevel}）知晓内情，但角色档案标记为不知真相`,
       suggestion: '请统一角色知情设定，或修改旁白描述',
+      status: 'open',
+      statusUpdatedAt: Date.now(),
     });
   }
 
@@ -191,8 +200,11 @@ function validateCharacterSecrets(
           characterId: char.id,
           chapterId: scene.chapterId,
           quote: `${char.name}知道诅咒的真相`,
+          secretTopic: '诅咒的真相',
           message: `场景描述直接写明「${char.name}知道诅咒的真相」，但角色档案标记为不知真相`,
           suggestion: '请统一角色知情设定，或修改场景描述',
+          status: 'open',
+          statusUpdatedAt: Date.now(),
         });
       }
     }
@@ -268,6 +280,8 @@ function validateCurseRules(
           chapterId: scene.chapterId,
           message: `场景内容涉及「${info.ruleName}」相关设定但未引用该规则`,
           suggestion: `内容中提到了与「${info.ruleName}」相关的关键词，建议在场景中引用此${info.ruleType === 'spread' ? '传播' : info.ruleType === 'deepen' ? '加深' : info.ruleType === 'release' ? '解除' : ''}规则以保持设定一致`,
+          status: 'open',
+          statusUpdatedAt: Date.now(),
         });
       }
     }
@@ -293,6 +307,8 @@ function validateCurseRules(
           chapterId: scene.chapterId,
           message: `分支「${choice.text.slice(0, 20)}…」诅咒值+${choice.curseDelta}但未引用加深规则`,
           suggestion: '建议在场景中引用对应的诅咒加深规则以保持设定一致',
+          status: 'open',
+          statusUpdatedAt: Date.now(),
         });
       }
     }
@@ -310,6 +326,8 @@ function validateCurseRules(
           chapterId: scene.chapterId,
           message: `分支「${choice.text.slice(0, 20)}…」诅咒值大幅降低（${choice.curseDelta}）但未引用任何解除规则`,
           suggestion: '请在场景中引用至少一条解除类诅咒规则，或调整诅咒值变化',
+          status: 'open',
+          statusUpdatedAt: Date.now(),
         });
       }
     }
@@ -334,6 +352,8 @@ function validateCurseRules(
           chapterId: scene.chapterId,
           message: `场景引用了「${rule.name}」但内容中未体现该规则相关描述`,
           suggestion: '如果场景内容不涉及此规则，可移除引用以保持简洁',
+          status: 'open',
+          statusUpdatedAt: Date.now(),
         });
       }
     }
@@ -354,6 +374,8 @@ function validateSceneConnectivity(
       chapterId: scene.chapterId,
       message: `场景「${scene.title}」没有分支选项，可能形成剧情死路`,
       suggestion: '如非结局场景，建议添加至少一个选项或跳转目标',
+      status: 'open',
+      statusUpdatedAt: Date.now(),
     });
   }
 
@@ -368,6 +390,8 @@ function validateSceneConnectivity(
         chapterId: scene.chapterId,
         message: `分支「${choice.text.slice(0, 20)}…」未设置下一场景或结局`,
         suggestion: '请配置该选项跳转到下一场景或指定结局',
+        status: 'open',
+        statusUpdatedAt: Date.now(),
       });
     }
   }
@@ -454,6 +478,8 @@ function validateForeshadowing(
         chapterId: endingChapterId,
         message: `结局「${ending.title}」所需线索铺垫不足：${missingNames}尚未在任何章节中出现`,
         suggestion: `请在进入此结局前的章节中通过场景或对话揭示这些线索（已铺垫：${partial.length > 0 ? partial.map((p) => p.name).join('、') : '无'}）`,
+        status: 'open',
+        statusUpdatedAt: Date.now(),
       });
     }
   }
@@ -473,6 +499,201 @@ export function runValidation(state: ValidationState): ValidationIssue[] {
   validateForeshadowing(state.endings, state.chapters, state.clues, issues);
 
   return issues;
+}
+
+export interface CurseFlowBranch {
+  branchKey: string;
+  snapshots: {
+    chapterId: string;
+    chapterTitle: string;
+    sceneId: string;
+    sceneTitle: string;
+    choiceId?: string;
+    choiceText?: string;
+    curseValue: number;
+    delta: number;
+    warning?: 'spike' | 'early-release';
+  }[];
+  maxCurse: number;
+  minCurse: number;
+  endingId?: string;
+  endingTitle?: string;
+  endingType?: string;
+}
+
+export function buildCurseFlow(chapters: Chapter[], endings: Ending[]): CurseFlowBranch[] {
+  const results: CurseFlowBranch[] = [];
+  const sceneMap = new Map<string, Scene>();
+  for (const ch of chapters) {
+    for (const sc of ch.scenes) {
+      sceneMap.set(sc.id, sc);
+    }
+  }
+  const endingMap = new Map(endings.map((e) => [e.id, e]));
+
+  function traverse(
+    sceneId: string,
+    currentCurse: number,
+    path: CurseFlowBranch['snapshots'],
+    visitedScenes: Set<string>,
+    branchKey: string,
+  ): void {
+    if (visitedScenes.has(sceneId)) return;
+    visitedScenes.add(sceneId);
+
+    const scene = sceneMap.get(sceneId);
+    if (!scene) return;
+
+    const chapter = chapters.find((ch) => ch.scenes.some((s) => s.id === sceneId));
+    if (!chapter) return;
+
+    const entrySnapshot: CurseFlowBranch['snapshots'][0] = {
+      chapterId: chapter.id,
+      chapterTitle: chapter.title,
+      sceneId: scene.id,
+      sceneTitle: scene.title,
+      curseValue: currentCurse,
+      delta: 0,
+    };
+    const currentPath = [...path, entrySnapshot];
+
+    if (scene.choices.length === 0) {
+      const ending = endings.find((e) => e.chapterId === chapter.id && e.title.includes(scene.title));
+      results.push({
+        branchKey,
+        snapshots: currentPath,
+        maxCurse: Math.max(...currentPath.map((s) => s.curseValue)),
+        minCurse: Math.min(...currentPath.map((s) => s.curseValue)),
+        endingId: ending?.id,
+        endingTitle: ending?.title,
+        endingType: ending?.type,
+      });
+      return;
+    }
+
+    for (const choice of scene.choices) {
+      const nextCurse = currentCurse + choice.curseDelta;
+      let warning: 'spike' | 'early-release' | undefined;
+      if (choice.curseDelta >= 3) warning = 'spike';
+      if (choice.curseDelta <= -3 && currentCurse > 5) warning = 'early-release';
+
+      const choiceSnapshot: CurseFlowBranch['snapshots'][0] = {
+        chapterId: chapter.id,
+        chapterTitle: chapter.title,
+        sceneId: scene.id,
+        sceneTitle: scene.title,
+        choiceId: choice.id,
+        choiceText: choice.text,
+        curseValue: nextCurse,
+        delta: choice.curseDelta,
+        warning,
+      };
+      const choicePath = [...currentPath, choiceSnapshot];
+
+      if (choice.endingId) {
+        const ending = endingMap.get(choice.endingId);
+        results.push({
+          branchKey: `${branchKey}-${choice.id}`,
+          snapshots: choicePath,
+          maxCurse: Math.max(...choicePath.map((s) => s.curseValue)),
+          minCurse: Math.min(...choicePath.map((s) => s.curseValue)),
+          endingId: choice.endingId,
+          endingTitle: ending?.title,
+        });
+        continue;
+      }
+
+      if (choice.nextSceneId) {
+        traverse(choice.nextSceneId, nextCurse, choicePath, new Set(visitedScenes), `${branchKey}-${choice.id}`);
+      } else {
+        results.push({
+          branchKey: `${branchKey}-${choice.id}`,
+          snapshots: choicePath,
+          maxCurse: Math.max(...choicePath.map((s) => s.curseValue)),
+          minCurse: Math.min(...choicePath.map((s) => s.curseValue)),
+        });
+      }
+    }
+  }
+
+  for (const chapter of chapters) {
+    if (chapter.scenes.length > 0) {
+      const firstScene = chapter.scenes[0];
+      traverse(firstScene.id, 0, [], new Set(), `ch-${chapter.id}`);
+    }
+  }
+
+  return results;
+}
+
+export interface ForeshadowingNode {
+  clueId: string;
+  clueName: string;
+  clueLevel: string;
+  firstRevealed?: { chapterId: string; chapterTitle: string; sceneTitle: string };
+  lastRevealed?: { chapterId: string; chapterTitle: string; sceneTitle: string };
+  allReveals: { chapterId: string; chapterTitle: string; sceneTitle: string }[];
+  usedInEnding: boolean;
+  status: 'revealed' | 'missing' | 'partial';
+}
+
+export interface ForeshadowingChain {
+  endingId: string;
+  endingTitle: string;
+  endingType: string;
+  nodes: ForeshadowingNode[];
+  suggestion?: { chapterId: string; chapterTitle: string; reason: string };
+}
+
+export function buildForeshadowingChain(
+  ending: Ending,
+  chapters: Chapter[],
+  clues: Clue[],
+  revelationMap: Map<string, ClueRevelationInfo>,
+): ForeshadowingChain {
+  const nodes: ForeshadowingNode[] = [];
+
+  for (const clueId of ending.requiredClueIds) {
+    const clue = clues.find((c) => c.id === clueId);
+    const info = revelationMap.get(clueId);
+    if (!clue) continue;
+
+    const reveals = info?.revealedInChapters ?? [];
+    const status: ForeshadowingNode['status'] =
+      reveals.length === 0 ? 'missing' : reveals.length >= 2 ? 'revealed' : 'partial';
+
+    nodes.push({
+      clueId,
+      clueName: clue.name,
+      clueLevel: clue.level,
+      firstRevealed: reveals[0],
+      lastRevealed: reveals[reveals.length - 1],
+      allReveals: reveals,
+      usedInEnding: true,
+      status,
+    });
+  }
+
+  let suggestion: ForeshadowingChain['suggestion'] | undefined;
+  const missingClues = nodes.filter((n) => n.status === 'missing');
+  if (missingClues.length > 0 && chapters.length > 0) {
+    const endingChapter = chapters.find((ch) => ch.id === ending.chapterId);
+    const chapterIndex = chapters.findIndex((ch) => ch.id === ending.chapterId);
+    const prevChapter = chapterIndex > 0 ? chapters[chapterIndex - 1] : chapters[0];
+    suggestion = {
+      chapterId: prevChapter.id,
+      chapterTitle: prevChapter.title,
+      reason: `建议在「${prevChapter.title}」中铺垫：${missingClues.map((c) => c.clueName).join('、')}`,
+    };
+  }
+
+  return {
+    endingId: ending.id,
+    endingTitle: ending.title,
+    endingType: ending.type,
+    nodes,
+    suggestion,
+  };
 }
 
 function escapeRegex(str: string): string {

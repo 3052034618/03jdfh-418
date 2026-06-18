@@ -82,6 +82,7 @@ export interface Ending {
 
 export type ValidationCategory = 'curse' | 'character' | 'foreshadowing' | 'connectivity' | 'other';
 export type ValidationType = 'error' | 'warning' | 'info';
+export type IssueStatus = 'open' | 'fixed' | 'ignored' | 'needs-lead';
 
 export interface ValidationIssue {
   id: string;
@@ -94,6 +95,21 @@ export interface ValidationIssue {
   characterId?: string;
   chapterId?: string;
   quote?: string;
+  secretTopic?: string;
+  status: IssueStatus;
+  statusUpdatedAt: number;
+}
+
+export interface CursePointSnapshot {
+  chapterId: string;
+  chapterTitle: string;
+  sceneId: string;
+  sceneTitle: string;
+  choiceId?: string;
+  choiceText?: string;
+  curseValue: number;
+  delta: number;
+  pathKey: string;
 }
 
 export const RULE_TYPE_LABEL: Record<RuleType, string> = {
@@ -142,4 +158,11 @@ export const VALIDATION_CATEGORY_LABEL: Record<ValidationCategory, string> = {
   foreshadowing: '铺垫完整度',
   connectivity: '逻辑连通',
   other: '其他',
+};
+
+export const ISSUE_STATUS_LABEL: Record<IssueStatus, string> = {
+  open: '待处理',
+  fixed: '已改',
+  ignored: '忽略',
+  'needs-lead': '待主笔确认',
 };

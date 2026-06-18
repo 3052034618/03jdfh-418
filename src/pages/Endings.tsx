@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ScrollText,
   ChevronDown,
@@ -15,6 +16,10 @@ import {
   Save,
   Trash2,
   Edit3,
+  GitBranch,
+  List,
+  ArrowRight,
+  Sparkles,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import {
@@ -24,7 +29,12 @@ import {
   type EndingStatus,
   type Ending,
 } from '@/types';
-import { buildClueRevelationMap, type ClueRevelationInfo } from '@/utils/validation';
+import {
+  buildClueRevelationMap,
+  buildForeshadowingChain,
+  type ClueRevelationInfo,
+  type ForeshadowingChain,
+} from '@/utils/validation';
 import { cn } from '@/lib/utils';
 
 const ENDING_TYPES: { type: EndingType; label: string; color: string; glow: string; accent: string }[] = [
@@ -35,6 +45,7 @@ const ENDING_TYPES: { type: EndingType; label: string; color: string; glow: stri
 ];
 
 export default function Endings() {
+  const navigate = useNavigate();
   const endings = useAppStore((s) => s.endings);
   const chapters = useAppStore((s) => s.chapters);
   const clues = useAppStore((s) => s.clues);
@@ -52,6 +63,8 @@ export default function Endings() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [viewMode, setViewMode] = useState<'list' | 'chain'>('list');
+  const [selectedEndingForChain, setSelectedEndingForChain] = useState<string | null>(null);
   const [form, setForm] = useState<Partial<Ending>>({
     type: 'true',
     title: '',
@@ -61,6 +74,27 @@ export default function Endings() {
     chapterId: chapters[0]?.id,
     status: 'pending',
   });
+
+  const clueRevelationMap = useMemo(() => {
+    return buildClueRevelationMap(chapters, clues);
+  }, [chapters, clues]);
+
+  const chains = useMemo(() => {
+    return endings.map((e) => buildForeshadowingChain(e, chapters, clues, clueRevelationMap));
+  }, [endings, chapters, clues, clueRevelationMap]);
+
+  const selectedChain = useMemo(() => {
+    if (!selectedEndingForChain) return null;
+    return chains.find((c) => c.endingId === selectedEndingForChain) ?? null;
+  }, [selectedEndingForChain, chains]);
+
+  const handleJumpToChapter = (chapterId: string, sceneId?: string) => {
+    navigate('/chapters');
+    setTimeout(() => {
+      const event = new CustomEvent('jump-to-scene', { detail: { chapterId, sceneId } });
+      window.dispatchEvent(event);
+    }, 100);
+  };
 
   const filteredEndings = useMemo(
     () => (activeType === 'all' ? endings : endings.filter((e) => e.type === activeType)),
@@ -132,10 +166,6 @@ export default function Endings() {
 
   const getChapterTitle = (id?: string) => chapters.find((c) => c.id === id)?.title ?? '未指定';
 
-  const clueRevelationMap = useMemo(() => {
-    return buildClueRevelationMap(chapters, clues);
-  }, [chapters, clues]);
-
   return (
     <div className="h-screen flex flex-col overflow-hidden">
       <div className="z-20 bg-ink-950/90 backdrop-blur-md border-b border-ink-700/60 px-8 py-5 shrink-0">
@@ -149,11 +179,33 @@ export default function Endings() {
               </p>
             </div>
           </div>
-          {isLead && (
-            <button onClick={startCreate} className="btn-primary flex items-center gap-1.5">
-              <Plus className="w-3.5 h-3.5" /> 新增结局
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center bg-ink-900/60 border border-ink-700/60 rounded-sm overflow-hidden">
+              <button
+                onClick={() => setViewMode('list')}
+                className={cn(
+                  'px-3 py-1.5 text-[11px] font-body flex items-center gap-1.5 transition-all',
+                  viewMode === 'list' ? 'bg-blood-900/40 text-blood-300' : 'text-ash-500 hover:text-ash-300',
+                )}
+              >
+                <List className="w-3 h-3" /> 列表视图
+              </button>
+              <button
+                onClick={() => setViewMode('chain')}
+                className={cn(
+                  'px-3 py-1.5 text-[11px] font-body flex items-center gap-1.5 transition-all',
+                  viewMode === 'chain' ? 'bg-void-800/40 text-frost-400' : 'text-ash-500 hover:text-ash-300',
+                )}
+              >
+                <GitBranch className="w-3 h-3" /> 铺垫链路
+              </button>
+            </div>
+            {isLead && (
+              <button onClick={startCreate} className="btn-primary flex items-center gap-1.5">
+                <Plus className="w-3.5 h-3.5" /> 新增结局
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-4 gap-4">
@@ -212,120 +264,142 @@ export default function Endings() {
 
       <div className="flex-1 overflow-y-auto p-8">
         <div className="max-w-4xl mx-auto space-y-3">
-          {creating && (
-            <div className="card-dark border-l-4 border-l-blood-600 p-5 animate-fade-in">
-              <EndingForm
-                form={form}
-                setForm={setForm}
-                chapters={chapters}
-                clues={clues}
-                onCancel={() => setCreating(false)}
-                onSave={saveForm}
-                mode="create"
-              />
-            </div>
-          )}
-
-          {filteredEndings.length === 0 && !creating && (
-            <div className="text-center py-16 text-ash-600">
-              <ScrollText className="w-10 h-10 mx-auto mb-3 opacity-30" />
-              <p className="font-body text-sm">此分类下暂无结局</p>
-            </div>
-          )}
-
-          {filteredEndings.map((ending) => {
-            const isExpanded = expandedIds.has(ending.id);
-            const isEditing = editingId === ending.id;
-            const et = ENDING_TYPES.find((x) => x.type === ending.type)!;
-            const missingClues = ending.requiredClueIds.filter((id) => !clueRevelationMap.get(id)?.isRevealed);
-            return (
-              <div
-                key={ending.id}
-                className={cn(
-                  'card-dark overflow-hidden animate-fade-in transition-all duration-300',
-                  isExpanded && et.glow,
-                )}
-              >
-                <div
-                  className="flex items-center gap-4 px-5 py-4 cursor-pointer hover:bg-ink-800/40 transition-colors"
-                  onClick={() => !isEditing && toggleExpand(ending.id)}
-                >
-                  {isExpanded ? (
-                    <ChevronDown className={cn('w-4 h-4 shrink-0', et.accent.split(' ').pop())} />
-                  ) : (
-                    <ChevronRight className={cn('w-4 h-4 shrink-0', et.accent.split(' ').pop())} />
-                  )}
-
-                  <div className={cn(
-                    'px-2.5 py-1 text-[11px] font-body border shrink-0',
-                    et.accent,
-                    `bg-gradient-to-br ${et.color}`,
-                  )}>
-                    {ENDING_TYPE_LABEL[ending.type]}
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-display text-base text-ash-100 tracking-wide truncate">{ending.title}</h3>
-                    <p className="text-[11px] text-ash-600 mt-0.5 font-body truncate">
-                      {getChapterTitle(ending.chapterId)} · 需 {ending.requiredClueIds.length} 条线索
-                    </p>
-                  </div>
-
-                  {missingClues.length > 0 && (
-                    <div className="flex items-center gap-1 px-2 py-1 bg-blood-900/30 border border-blood-800/50 text-[10px] text-blood-400 font-body shrink-0">
-                      <AlertTriangle className="w-3 h-3" />
-                      {missingClues.length} 条线索未铺垫
-                    </div>
-                  )}
-
-                  <div className="flex items-center gap-1 shrink-0">
-                    <StatusBadge status={ending.status} />
-                    {isLead && !isEditing && (
-                      <>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); startEdit(ending); }}
-                          className="p-1.5 text-ash-500 hover:text-ash-200 hover:bg-ink-700/60 transition-colors"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); deleteEnding(ending.id); }}
-                          className="p-1.5 text-ash-500 hover:text-blood-400 hover:bg-blood-900/30 transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </>
-                    )}
-                  </div>
+          {viewMode === 'list' ? (
+            <>
+              {creating && (
+                <div className="card-dark border-l-4 border-l-blood-600 p-5 animate-fade-in">
+                  <EndingForm
+                    form={form}
+                    setForm={setForm}
+                    chapters={chapters}
+                    clues={clues}
+                    onCancel={() => setCreating(false)}
+                    onSave={saveForm}
+                    mode="create"
+                  />
                 </div>
+              )}
 
-                {isExpanded && (
-                  <div className="border-t border-ink-700/50 px-5 py-4 animate-fade-in">
-                    {isEditing ? (
-                      <EndingForm
-                        form={form}
-                        setForm={setForm}
-                        chapters={chapters}
-                        clues={clues}
-                        onCancel={() => setEditingId(null)}
-                        onSave={saveForm}
-                        mode="edit"
-                      />
-                    ) : (
-                      <EndingDetail
-                        ending={ending}
-                        clues={clues}
-                        missingClues={missingClues}
-                        clueRevelationMap={clueRevelationMap}
-                        isLead={!!isLead}
-                        onSetStatus={(s) => setEndingStatus(ending.id, s)}
-                      />
+              {filteredEndings.length === 0 && !creating && (
+                <div className="text-center py-16 text-ash-600">
+                  <ScrollText className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                  <p className="font-body text-sm">此分类下暂无结局</p>
+                </div>
+              )}
+
+              {filteredEndings.map((ending) => {
+                const isExpanded = expandedIds.has(ending.id);
+                const isEditing = editingId === ending.id;
+                const et = ENDING_TYPES.find((x) => x.type === ending.type)!;
+                const missingClues = ending.requiredClueIds.filter((id) => !clueRevelationMap.get(id)?.isRevealed);
+                return (
+                  <div
+                    key={ending.id}
+                    className={cn(
+                      'card-dark overflow-hidden animate-fade-in transition-all duration-300',
+                      isExpanded && et.glow,
+                    )}
+                  >
+                    <div
+                      className="flex items-center gap-4 px-5 py-4 cursor-pointer hover:bg-ink-800/40 transition-colors"
+                      onClick={() => !isEditing && toggleExpand(ending.id)}
+                    >
+                      {isExpanded ? (
+                        <ChevronDown className={cn('w-4 h-4 shrink-0', et.accent.split(' ').pop())} />
+                      ) : (
+                        <ChevronRight className={cn('w-4 h-4 shrink-0', et.accent.split(' ').pop())} />
+                      )}
+
+                      <div className={cn(
+                        'px-2.5 py-1 text-[11px] font-body border shrink-0',
+                        et.accent,
+                        `bg-gradient-to-br ${et.color}`,
+                      )}>
+                        {ENDING_TYPE_LABEL[ending.type]}
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-display text-base text-ash-100 tracking-wide truncate">{ending.title}</h3>
+                        <p className="text-[11px] text-ash-600 mt-0.5 font-body truncate">
+                          {getChapterTitle(ending.chapterId)} · 需 {ending.requiredClueIds.length} 条线索
+                        </p>
+                      </div>
+
+                      {missingClues.length > 0 && (
+                        <div className="flex items-center gap-1 px-2 py-1 bg-blood-900/30 border border-blood-800/50 text-[10px] text-blood-400 font-body shrink-0">
+                          <AlertTriangle className="w-3 h-3" />
+                          {missingClues.length} 条线索未铺垫
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setViewMode('chain');
+                            setSelectedEndingForChain(ending.id);
+                          }}
+                          className="p-1.5 text-ash-500 hover:text-frost-400 hover:bg-void-800/40 transition-colors"
+                          title="查看铺垫链路"
+                        >
+                          <GitBranch className="w-3.5 h-3.5" />
+                        </button>
+                        <StatusBadge status={ending.status} />
+                        {isLead && !isEditing && (
+                          <>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); startEdit(ending); }}
+                              className="p-1.5 text-ash-500 hover:text-ash-200 hover:bg-ink-700/60 transition-colors"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); deleteEnding(ending.id); }}
+                              className="p-1.5 text-ash-500 hover:text-blood-400 hover:bg-blood-900/30 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="border-t border-ink-700/50 px-5 py-4 animate-fade-in">
+                        {isEditing ? (
+                          <EndingForm
+                            form={form}
+                            setForm={setForm}
+                            chapters={chapters}
+                            clues={clues}
+                            onCancel={() => setEditingId(null)}
+                            onSave={saveForm}
+                            mode="edit"
+                          />
+                        ) : (
+                          <EndingDetail
+                            ending={ending}
+                            clues={clues}
+                            missingClues={missingClues}
+                            clueRevelationMap={clueRevelationMap}
+                            isLead={!!isLead}
+                            onSetStatus={(s) => setEndingStatus(ending.id, s)}
+                          />
+                        )}
+                      </div>
                     )}
                   </div>
-                )}
-              </div>
-            );
-          })}
+                );
+              })}
+            </>
+          ) : (
+            <ForeshadowingChainView
+              chains={chains}
+              selectedChain={selectedChain}
+              onSelectEnding={setSelectedEndingForChain}
+              onJumpToChapter={handleJumpToChapter}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -570,6 +644,251 @@ function EndingForm({ form, setForm, chapters, clues, onCancel, onSave, mode }: 
           <Save className="w-3.5 h-3.5" />
           {mode === 'create' ? '创建结局' : '保存修改'}
         </button>
+      </div>
+    </div>
+  );
+}
+
+interface ForeshadowingChainViewProps {
+  chains: ForeshadowingChain[];
+  selectedChain: ForeshadowingChain | null;
+  onSelectEnding: (id: string | null) => void;
+  onJumpToChapter: (chapterId: string, sceneId?: string) => void;
+}
+
+function ForeshadowingChainView({
+  chains,
+  selectedChain,
+  onSelectEnding,
+  onJumpToChapter,
+}: ForeshadowingChainViewProps) {
+  return (
+    <div className="flex gap-4 min-h-[600px]">
+      <div className="w-72 shrink-0 border-r border-ink-700/50 pr-4">
+        <div className="label-dark mb-2">选择结局</div>
+        <div className="space-y-1.5">
+          {chains.map((chain) => {
+            const isSelected = selectedChain?.endingId === chain.endingId;
+            const missingCount = chain.nodes.filter((n) => n.status === 'missing').length;
+            const partialCount = chain.nodes.filter((n) => n.status === 'partial').length;
+            const et = ENDING_TYPES.find((x) => x.type === chain.endingType as EndingType);
+            return (
+              <button
+                key={chain.endingId}
+                onClick={() => onSelectEnding(chain.endingId)}
+                className={cn(
+                  'w-full text-left p-3 border rounded-sm transition-all duration-200',
+                  isSelected
+                    ? 'bg-void-800/30 border-void-600/60 shadow-glow-purple'
+                    : 'bg-ink-800/30 border-ink-700/40 hover:border-ink-600',
+                )}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={cn(
+                    'text-[10px] px-1.5 py-0.5 font-body border',
+                    et?.accent,
+                  )}>
+                    {et ? ENDING_TYPE_LABEL[et.type] : chain.endingType}
+                  </span>
+                  {missingCount > 0 && (
+                    <span className="text-[10px] px-1 py-0.5 bg-blood-900/40 text-blood-400 border border-blood-800/50 font-body flex items-center gap-0.5">
+                      <AlertTriangle className="w-2 h-2" /> {missingCount}缺失
+                    </span>
+                  )}
+                  {partialCount > 0 && missingCount === 0 && (
+                    <span className="text-[10px] px-1 py-0.5 bg-ember-800/40 text-ember-500 border border-ember-700/50 font-body">
+                      {partialCount}待补
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-ash-200 font-body truncate">{chain.endingTitle}</p>
+                <p className="text-[11px] text-ash-600 font-body mt-0.5">
+                  {chain.nodes.length} 条线索
+                </p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flex-1 min-w-0">
+        {selectedChain ? (
+          <div className="animate-fade-in">
+            <div className="card-dark mb-4">
+              <div className="px-5 py-4 border-b border-ink-700/50">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-display text-base text-ash-100 tracking-wide">
+                      {selectedChain.endingTitle} · 铺垫链路
+                    </h3>
+                    <p className="text-[11px] text-ash-600 font-body mt-0.5">
+                      必需线索从首次出现到关键使用的完整时间线
+                    </p>
+                  </div>
+                  {selectedChain.suggestion && (
+                    <button
+                      onClick={() => onJumpToChapter(selectedChain.suggestion!.chapterId)}
+                      className="btn-primary !text-xs !py-1.5 flex items-center gap-1.5"
+                    >
+                      <Sparkles className="w-3 h-3" /> 跳转补铺垫
+                    </button>
+                  )}
+                </div>
+                {selectedChain.suggestion && (
+                  <div className="mt-3 p-3 bg-ember-900/20 border border-ember-700/50 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-ember-500 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-[12px] text-ember-400 font-body">
+                        {selectedChain.suggestion.reason}
+                      </p>
+                      <p className="text-[11px] text-ember-600 font-body mt-0.5">
+                        建议章节：{selectedChain.suggestion.chapterTitle}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {selectedChain.nodes.map((node, idx) => (
+                <div
+                  key={node.clueId}
+                  className={cn(
+                    'card-dark overflow-hidden',
+                    node.status === 'missing' && 'border-blood-700/50',
+                    node.status === 'partial' && 'border-ember-700/50',
+                  )}
+                >
+                  <div className="flex items-start gap-4 p-4">
+                    <div className="shrink-0 w-10 h-10 rounded-full border-2 border-ink-600 flex items-center justify-center bg-ink-900/60">
+                      <span className="text-[12px] font-display text-ash-400">#{idx + 1}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <span className={cn(
+                          'text-sm font-body',
+                          node.status === 'missing' && 'text-blood-400',
+                          node.status === 'partial' && 'text-ember-500',
+                          node.status === 'revealed' && 'text-verdant-500',
+                        )}>
+                          {node.clueName}
+                        </span>
+                        <span className="text-[10px] px-1 py-0.5 bg-void-800/40 text-frost-400 border border-void-700/50 font-body">
+                          [{node.clueLevel}]
+                        </span>
+                        {node.status === 'revealed' && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-verdant-800/40 text-verdant-500 border border-verdant-700/50 font-body flex items-center gap-0.5">
+                            <CheckCircle2 className="w-2 h-2" /> 铺垫完整
+                          </span>
+                        )}
+                        {node.status === 'partial' && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-ember-800/40 text-ember-500 border border-ember-700/50 font-body flex items-center gap-0.5">
+                            <AlertTriangle className="w-2 h-2" /> 仅出现1次
+                          </span>
+                        )}
+                        {node.status === 'missing' && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-blood-900/40 text-blood-400 border border-blood-800/50 font-body flex items-center gap-0.5">
+                            <XCircle className="w-2 h-2" /> 尚未铺垫
+                          </span>
+                        )}
+                      </div>
+
+                      {node.status !== 'missing' && node.allReveals.length > 0 && (
+                        <div className="space-y-2 mt-2">
+                          <p className="text-[11px] text-ash-600 font-body flex items-center gap-1">
+                            <GitBranch className="w-2.5 h-2.5" /> 出现时间线：
+                          </p>
+                          <div className="space-y-1.5 ml-5 border-l-2 border-ink-700/50 pl-4">
+                            {node.allReveals.map((reveal, rIdx) => (
+                              <div
+                                key={rIdx}
+                                onClick={() => onJumpToChapter(reveal.chapterId)}
+                                className="group cursor-pointer hover:bg-ink-800/40 -ml-1.5 pl-1.5 -mr-1.5 pr-1.5 py-1 rounded transition-colors"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-frost-500 shrink-0" />
+                                  <span className="text-[11px] text-ash-400 font-body">
+                                    {reveal.chapterTitle}
+                                  </span>
+                                  <ArrowRight className="w-2 h-2 text-ash-600" />
+                                  <span className="text-[11px] text-ash-300 font-body">
+                                    {reveal.sceneTitle}
+                                  </span>
+                                  {rIdx === 0 && (
+                                    <span className="text-[9px] px-1 py-0.5 bg-void-800/40 text-frost-400 border border-void-700/40 font-body">
+                                      首次出现
+                                    </span>
+                                  )}
+                                  {rIdx === node.allReveals.length - 1 && node.allReveals.length > 1 && (
+                                    <span className="text-[9px] px-1 py-0.5 bg-verdant-800/40 text-verdant-400 border border-verdant-700/40 font-body">
+                                      关键使用
+                                    </span>
+                                  )}
+                                  <span className="text-[10px] text-ash-600 font-body opacity-0 group-hover:opacity-100 transition-opacity ml-auto">
+                                    点击跳转 →
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                            <div className="flex items-center gap-2">
+                              <span className="w-1.5 h-1.5 rounded-full bg-blood-500 shrink-0" />
+                              <span className="text-[11px] text-blood-400 font-body">
+                                结局「{selectedChain.endingTitle}」中使用
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {node.status === 'missing' && (
+                        <div className="mt-2 flex items-center gap-3">
+                          <p className="text-[11px] text-blood-400/70 font-body">
+                            此线索尚未在任何章节中出现
+                          </p>
+                          {selectedChain.suggestion && (
+                            <button
+                              onClick={() => onJumpToChapter(selectedChain.suggestion!.chapterId)}
+                              className="text-[11px] px-2 py-0.5 bg-blood-900/40 text-blood-400 border border-blood-800/50 font-body hover:bg-blood-900/60 transition-colors flex items-center gap-1"
+                            >
+                              <ArrowRight className="w-2.5 h-2.5" /> 前往「{selectedChain.suggestion.chapterTitle}」补铺垫
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {node.status === 'partial' && (
+                        <div className="mt-2 flex items-center gap-3">
+                          <p className="text-[11px] text-ember-500/70 font-body">
+                            仅出现 1 次，建议在进入结局前再铺垫一次强化记忆
+                          </p>
+                          {selectedChain.suggestion && (
+                            <button
+                              onClick={() => onJumpToChapter(selectedChain.suggestion!.chapterId)}
+                              className="text-[11px] px-2 py-0.5 bg-ember-800/40 text-ember-500 border border-ember-700/50 font-body hover:bg-ember-800/60 transition-colors flex items-center gap-1"
+                            >
+                              <ArrowRight className="w-2.5 h-2.5" /> 前往「{selectedChain.suggestion.chapterTitle}」
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="h-full flex items-center justify-center text-ash-600">
+            <div className="text-center">
+              <GitBranch className="w-12 h-12 mx-auto mb-3 opacity-20" />
+              <p className="text-sm font-body">请从左侧选择一个结局</p>
+              <p className="text-[11px] text-ash-600 font-body mt-1">
+                查看该结局所需线索的完整铺垫时间线
+              </p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

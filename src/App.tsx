@@ -3,6 +3,7 @@ import Layout from '@/components/Layout';
 import WorldRules from '@/pages/WorldRules';
 import Chapters from '@/pages/Chapters';
 import Endings from '@/pages/Endings';
+import CurseFlow from '@/pages/CurseFlow';
 
 export default function App() {
   return (
@@ -12,6 +13,7 @@ export default function App() {
           <Route path="/" element={<WorldRules />} />
           <Route path="/chapters" element={<Chapters />} />
           <Route path="/endings" element={<Endings />} />
+          <Route path="/curse-flow" element={<CurseFlow />} />
         </Route>
       </Routes>
     </Router>

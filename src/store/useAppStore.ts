@@ -16,6 +16,8 @@ import type {
   ChapterStatus,
   EndingType,
   EndingStatus,
+  IssueStatus,
+  CursePointSnapshot,
 } from '@/types';
 import {
   MOCK_RULES,
@@ -25,7 +27,7 @@ import {
   MOCK_CHAPTERS,
   MOCK_ENDINGS,
 } from '@/data/mockData';
-import { runValidation } from '@/utils/validation';
+import { runValidation, buildCurseFlow, type CurseFlowBranch } from '@/utils/validation';
 
 interface AppState {
   currentUserId: string;
@@ -73,6 +75,9 @@ interface AppState {
   runFullValidation: () => void;
   runChapterValidation: (chapterId: string) => void;
   clearValidation: () => void;
+  setIssueStatus: (issueId: string, status: IssueStatus) => void;
+
+  buildCurseFlow: () => CurseFlowBranch[];
 }
 
 const genId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -258,28 +263,63 @@ export const useAppStore = create<AppState>()(
 
       runFullValidation: () => {
         const state = get();
-        const issues = runValidation(state);
+        const now = Date.now();
+        const existingStatusMap = new Map(
+          state.validationIssues.map((i) => [i.id, { status: i.status, statusUpdatedAt: i.statusUpdatedAt }]),
+        );
+        const issues = runValidation(state).map((issue) => {
+          const existing = existingStatusMap.get(issue.id);
+          return {
+            ...issue,
+            status: existing?.status ?? 'open',
+            statusUpdatedAt: existing?.statusUpdatedAt ?? now,
+          };
+        });
         set({ validationIssues: issues });
       },
       runChapterValidation: (chapterId: string) => {
         const state = get();
+        const now = Date.now();
         const allIssues = runValidation(state);
+        const existingStatusMap = new Map(
+          state.validationIssues.map((i) => [i.id, { status: i.status, statusUpdatedAt: i.statusUpdatedAt }]),
+        );
+        const issuesWithStatus = allIssues.map((issue) => {
+          const existing = existingStatusMap.get(issue.id);
+          return {
+            ...issue,
+            status: existing?.status ?? 'open',
+            statusUpdatedAt: existing?.statusUpdatedAt ?? now,
+          };
+        });
         const chapter = state.chapters.find((ch) => ch.id === chapterId);
         const sceneIds = new Set(chapter?.scenes.map((s) => s.id) ?? []);
         const chapterIssueIds = new Set(
-          allIssues.filter((i) => i.sceneId && sceneIds.has(i.sceneId)).map((i) => i.id),
+          issuesWithStatus.filter((i) => i.sceneId && sceneIds.has(i.sceneId)).map((i) => i.id),
         );
-        const foreshadowIssues = allIssues.filter((i) => i.category === 'foreshadowing');
+        const foreshadowIssues = issuesWithStatus.filter((i) => i.category === 'foreshadowing');
         for (const fi of foreshadowIssues) {
           chapterIssueIds.add(fi.id);
         }
         const otherIssues = state.validationIssues.filter(
           (i) => !i.sceneId || !sceneIds.has(i.sceneId),
         );
-        const newChapterIssues = allIssues.filter((i) => chapterIssueIds.has(i.id));
+        const newChapterIssues = issuesWithStatus.filter((i) => chapterIssueIds.has(i.id));
         set({ validationIssues: [...otherIssues.filter((i) => i.category !== 'foreshadowing'), ...newChapterIssues] });
       },
       clearValidation: () => set({ validationIssues: [] }),
+      setIssueStatus: (issueId, status) => {
+        const now = Date.now();
+        set((s) => ({
+          validationIssues: s.validationIssues.map((i) =>
+            i.id === issueId ? { ...i, status, statusUpdatedAt: now } : i,
+          ),
+        }));
+      },
+      buildCurseFlow: () => {
+        const state = get();
+        return buildCurseFlow(state.chapters, state.endings);
+      },
     }),
     {
       name: 'curse-workbench',
@@ -291,6 +331,7 @@ export const useAppStore = create<AppState>()(
         writers: state.writers,
         chapters: state.chapters,
         endings: state.endings,
+        validationIssues: state.validationIssues,
       }),
     },
   ),

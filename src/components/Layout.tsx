@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Skull, BookOpen, ScrollText, Sparkles, User, Shield } from 'lucide-react';
+import { Skull, BookOpen, ScrollText, Sparkles, User, Shield, TrendingUp } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { USER_ROLE_LABEL } from '@/types';
 
@@ -7,6 +7,7 @@ const navItems = [
   { to: '/', icon: Skull, label: '世界观规则' },
   { to: '/chapters', icon: BookOpen, label: '章节编辑' },
   { to: '/endings', icon: ScrollText, label: '结局看板' },
+  { to: '/curse-flow', icon: TrendingUp, label: '诅咒值走向' },
 ];
 
 export default function Layout() {
