@@ -58,6 +58,7 @@ export default function Endings() {
   const updateEnding = useAppStore((s) => s.updateEnding);
   const addEnding = useAppStore((s) => s.addEnding);
   const deleteEnding = useAppStore((s) => s.deleteEnding);
+  const addPendingForeshadowing = useAppStore((s) => s.addPendingForeshadowing);
 
   const [activeType, setActiveType] = useState<EndingType | 'all'>('all');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -88,7 +89,10 @@ export default function Endings() {
     return chains.find((c) => c.endingId === selectedEndingForChain) ?? null;
   }, [selectedEndingForChain, chains]);
 
-  const handleJumpToChapter = (chapterId: string, sceneId?: string) => {
+  const handleJumpToChapter = (chapterId: string, sceneId?: string, clueHint?: { clueId: string; clueTitle: string; endingId: string; endingTitle: string }) => {
+    if (clueHint) {
+      addPendingForeshadowing(chapterId, clueHint);
+    }
     navigate('/chapters');
     setTimeout(() => {
       const event = new CustomEvent('jump-to-scene', { detail: { chapterId, sceneId } });
@@ -653,7 +657,7 @@ interface ForeshadowingChainViewProps {
   chains: ForeshadowingChain[];
   selectedChain: ForeshadowingChain | null;
   onSelectEnding: (id: string | null) => void;
-  onJumpToChapter: (chapterId: string, sceneId?: string) => void;
+  onJumpToChapter: (chapterId: string, sceneId?: string, clueHint?: { clueId: string; clueTitle: string; endingId: string; endingTitle: string }) => void;
 }
 
 function ForeshadowingChainView({
@@ -727,7 +731,20 @@ function ForeshadowingChainView({
                   </div>
                   {selectedChain.suggestion && (
                     <button
-                      onClick={() => onJumpToChapter(selectedChain.suggestion!.chapterId)}
+                      onClick={() => {
+                        const gaps = selectedChain.nodes.filter((n) => n.status === 'missing' || n.status === 'partial');
+                        for (const g of gaps) {
+                          onJumpToChapter(selectedChain.suggestion!.chapterId, undefined, {
+                            clueId: g.clueId,
+                            clueTitle: g.clueName,
+                            endingId: selectedChain.endingId,
+                            endingTitle: selectedChain.endingTitle,
+                          });
+                        }
+                        if (gaps.length === 0) {
+                          onJumpToChapter(selectedChain.suggestion!.chapterId);
+                        }
+                      }}
                       className="btn-primary !text-xs !py-1.5 flex items-center gap-1.5"
                     >
                       <Sparkles className="w-3 h-3" /> 跳转补铺垫
@@ -848,7 +865,14 @@ function ForeshadowingChainView({
                           </p>
                           {selectedChain.suggestion && (
                             <button
-                              onClick={() => onJumpToChapter(selectedChain.suggestion!.chapterId)}
+                              onClick={() =>
+                                onJumpToChapter(selectedChain.suggestion!.chapterId, undefined, {
+                                  clueId: node.clueId,
+                                  clueTitle: node.clueName,
+                                  endingId: selectedChain.endingId,
+                                  endingTitle: selectedChain.endingTitle,
+                                })
+                              }
                               className="text-[11px] px-2 py-0.5 bg-blood-900/40 text-blood-400 border border-blood-800/50 font-body hover:bg-blood-900/60 transition-colors flex items-center gap-1"
                             >
                               <ArrowRight className="w-2.5 h-2.5" /> 前往「{selectedChain.suggestion.chapterTitle}」补铺垫
@@ -864,7 +888,14 @@ function ForeshadowingChainView({
                           </p>
                           {selectedChain.suggestion && (
                             <button
-                              onClick={() => onJumpToChapter(selectedChain.suggestion!.chapterId)}
+                              onClick={() =>
+                                onJumpToChapter(selectedChain.suggestion!.chapterId, undefined, {
+                                  clueId: node.clueId,
+                                  clueTitle: node.clueName,
+                                  endingId: selectedChain.endingId,
+                                  endingTitle: selectedChain.endingTitle,
+                                })
+                              }
                               className="text-[11px] px-2 py-0.5 bg-ember-800/40 text-ember-500 border border-ember-700/50 font-body hover:bg-ember-800/60 transition-colors flex items-center gap-1"
                             >
                               <ArrowRight className="w-2.5 h-2.5" /> 前往「{selectedChain.suggestion.chapterTitle}」

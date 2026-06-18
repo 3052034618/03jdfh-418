@@ -29,6 +29,16 @@ import {
 } from '@/data/mockData';
 import { runValidation, buildCurseFlow, type CurseFlowBranch } from '@/utils/validation';
 
+function hashIssueContent(i: Omit<ValidationIssue, 'id' | 'status' | 'statusUpdatedAt'>): string {
+  const key = `${i.category}|${i.sceneId ?? ''}|${i.choiceId ?? ''}|${i.characterId ?? ''}|${i.chapterId ?? ''}|${i.secretTopic ?? ''}|${i.message}`;
+  let h = 0;
+  for (let k = 0; k < key.length; k++) {
+    h = (h << 5) - h + key.charCodeAt(k);
+    h |= 0;
+  }
+  return `${i.category}-${Math.abs(h).toString(36)}`;
+}
+
 interface AppState {
   currentUserId: string;
   rules: CurseRule[];
@@ -38,6 +48,7 @@ interface AppState {
   chapters: Chapter[];
   endings: Ending[];
   validationIssues: ValidationIssue[];
+  pendingForeshadowing: Record<string, { clueId: string; clueTitle: string; endingId: string; endingTitle: string; addedAt: number }[]>;
 
   setCurrentUser: (id: string) => void;
 
@@ -75,7 +86,12 @@ interface AppState {
   runFullValidation: () => void;
   runChapterValidation: (chapterId: string) => void;
   clearValidation: () => void;
+  clearChapterIssues: (chapterId: string) => void;
   setIssueStatus: (issueId: string, status: IssueStatus) => void;
+  setIssueStatusBatch: (issueIds: string[], status: IssueStatus) => void;
+
+  addPendingForeshadowing: (chapterId: string, clue: { clueId: string; clueTitle: string; endingId: string; endingTitle: string }) => void;
+  clearPendingForeshadowing: (chapterId: string) => void;
 
   buildCurseFlow: () => CurseFlowBranch[];
 }
@@ -93,6 +109,7 @@ export const useAppStore = create<AppState>()(
       chapters: MOCK_CHAPTERS,
       endings: MOCK_ENDINGS,
       validationIssues: [],
+      pendingForeshadowing: {},
 
       setCurrentUser: (id) => set({ currentUserId: id }),
 
@@ -265,12 +282,18 @@ export const useAppStore = create<AppState>()(
         const state = get();
         const now = Date.now();
         const existingStatusMap = new Map(
-          state.validationIssues.map((i) => [i.id, { status: i.status, statusUpdatedAt: i.statusUpdatedAt }]),
+          state.validationIssues.map((i) => {
+            const { id, status, statusUpdatedAt, ...rest } = i;
+            return [hashIssueContent(rest), { id, status, statusUpdatedAt }] as const;
+          }),
         );
         const issues = runValidation(state).map((issue) => {
-          const existing = existingStatusMap.get(issue.id);
+          const { id, status: _s, statusUpdatedAt: _t, ...rest } = issue;
+          const key = hashIssueContent(rest);
+          const existing = existingStatusMap.get(key);
           return {
             ...issue,
+            id: existing?.id ?? issue.id,
             status: existing?.status ?? 'open',
             statusUpdatedAt: existing?.statusUpdatedAt ?? now,
           };
@@ -282,12 +305,18 @@ export const useAppStore = create<AppState>()(
         const now = Date.now();
         const allIssues = runValidation(state);
         const existingStatusMap = new Map(
-          state.validationIssues.map((i) => [i.id, { status: i.status, statusUpdatedAt: i.statusUpdatedAt }]),
+          state.validationIssues.map((i) => {
+            const { id, status, statusUpdatedAt, ...rest } = i;
+            return [hashIssueContent(rest), { id, status, statusUpdatedAt }] as const;
+          }),
         );
         const issuesWithStatus = allIssues.map((issue) => {
-          const existing = existingStatusMap.get(issue.id);
+          const { id, status: _s, statusUpdatedAt: _t, ...rest } = issue;
+          const key = hashIssueContent(rest);
+          const existing = existingStatusMap.get(key);
           return {
             ...issue,
+            id: existing?.id ?? issue.id,
             status: existing?.status ?? 'open',
             statusUpdatedAt: existing?.statusUpdatedAt ?? now,
           };
@@ -305,9 +334,30 @@ export const useAppStore = create<AppState>()(
           (i) => !i.sceneId || !sceneIds.has(i.sceneId),
         );
         const newChapterIssues = issuesWithStatus.filter((i) => chapterIssueIds.has(i.id));
-        set({ validationIssues: [...otherIssues.filter((i) => i.category !== 'foreshadowing'), ...newChapterIssues] });
+        const preservedOtherIssues = otherIssues.filter((i) => i.category !== 'foreshadowing');
+        const allChapterSceneIds = new Set(newChapterIssues.map((i) => `${i.sceneId}-${i.category}-${i.message}`));
+        const dedupedOtherIssues = preservedOtherIssues.filter((oi) => {
+          if (oi.category === 'foreshadowing') return false;
+          const sig = `${oi.sceneId}-${oi.category}-${oi.message}`;
+          return !allChapterSceneIds.has(sig);
+        });
+        set({ validationIssues: [...dedupedOtherIssues, ...newChapterIssues] });
       },
       clearValidation: () => set({ validationIssues: [] }),
+      clearChapterIssues: (chapterId: string) => {
+        set((s) => {
+          const chapter = s.chapters.find((ch) => ch.id === chapterId);
+          const sceneIds = new Set(chapter?.scenes.map((sc) => sc.id) ?? []);
+          return {
+            validationIssues: s.validationIssues.filter((i) => {
+              if (i.category === 'foreshadowing') return true;
+              if (i.chapterId === chapterId) return false;
+              if (i.sceneId && sceneIds.has(i.sceneId)) return false;
+              return true;
+            }),
+          };
+        });
+      },
       setIssueStatus: (issueId, status) => {
         const now = Date.now();
         set((s) => ({
@@ -316,9 +366,38 @@ export const useAppStore = create<AppState>()(
           ),
         }));
       },
+      setIssueStatusBatch: (issueIds, status) => {
+        const now = Date.now();
+        const ids = new Set(issueIds);
+        set((s) => ({
+          validationIssues: s.validationIssues.map((i) =>
+            ids.has(i.id) ? { ...i, status, statusUpdatedAt: now } : i,
+          ),
+        }));
+      },
       buildCurseFlow: () => {
         const state = get();
         return buildCurseFlow(state.chapters, state.endings);
+      },
+      addPendingForeshadowing: (chapterId, clue) => {
+        set((s) => {
+          const existing = s.pendingForeshadowing[chapterId] ?? [];
+          const exists = existing.some((e) => e.clueId === clue.clueId && e.endingId === clue.endingId);
+          if (exists) return {};
+          return {
+            pendingForeshadowing: {
+              ...s.pendingForeshadowing,
+              [chapterId]: [...existing, { ...clue, addedAt: Date.now() }],
+            },
+          };
+        });
+      },
+      clearPendingForeshadowing: (chapterId) => {
+        set((s) => {
+          const next = { ...s.pendingForeshadowing };
+          delete next[chapterId];
+          return { pendingForeshadowing: next };
+        });
       },
     }),
     {
@@ -332,6 +411,7 @@ export const useAppStore = create<AppState>()(
         chapters: state.chapters,
         endings: state.endings,
         validationIssues: state.validationIssues,
+        pendingForeshadowing: state.pendingForeshadowing,
       }),
     },
   ),

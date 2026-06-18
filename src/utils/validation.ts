@@ -10,6 +10,26 @@ interface ValidationState {
 
 const genIssueId = () => `v-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
+function makeIssueSignature(issue: Omit<ValidationIssue, 'id' | 'status' | 'statusUpdatedAt'>): string {
+  const parts = [
+    issue.category,
+    issue.sceneId ?? '',
+    issue.choiceId ?? '',
+    issue.characterId ?? '',
+    issue.chapterId ?? '',
+    issue.secretTopic ?? '',
+    issue.message,
+  ];
+  let hash = 0;
+  const str = parts.join('|');
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    hash = (hash << 5) - hash + ch;
+    hash |= 0;
+  }
+  return `v-${Math.abs(hash).toString(36)}-${issue.category}-${issue.sceneId ?? issue.chapterId ?? 'global'}`;
+}
+
 interface DialogueMatch {
   characterId: string;
   characterName: string;

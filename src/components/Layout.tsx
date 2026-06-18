@@ -1,11 +1,12 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Skull, BookOpen, ScrollText, Sparkles, User, Shield, TrendingUp } from 'lucide-react';
+import { Skull, BookOpen, ScrollText, Sparkles, User, Shield, TrendingUp, LayoutDashboard } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
-import { USER_ROLE_LABEL } from '@/types';
+import { USER_ROLE_LABEL, type IssueStatus } from '@/types';
 
 const navItems = [
   { to: '/', icon: Skull, label: '世界观规则' },
   { to: '/chapters', icon: BookOpen, label: '章节编辑' },
+  { to: '/review', icon: LayoutDashboard, label: '主笔审稿' },
   { to: '/endings', icon: ScrollText, label: '结局看板' },
   { to: '/curse-flow', icon: TrendingUp, label: '诅咒值走向' },
 ];
@@ -16,6 +17,8 @@ export default function Layout() {
   const writers = useAppStore((s) => s.writers);
   const setCurrentUser = useAppStore((s) => s.setCurrentUser);
   const currentUser = writers.find((w) => w.id === currentUserId) ?? writers[0];
+  const validationIssues = useAppStore((s) => s.validationIssues);
+  const needsLeadCount = validationIssues.filter((i) => i.status === 'needs-lead').length;
 
   return (
     <div className="relative z-10 min-h-screen flex">
@@ -44,6 +47,7 @@ export default function Layout() {
             const isActive =
               (to === '/' && location.pathname === '/') ||
               (to !== '/' && location.pathname.startsWith(to));
+            const showBadge = to === '/review' && needsLeadCount > 0;
             return (
               <NavLink key={to} to={to}>
                 <div
@@ -52,7 +56,12 @@ export default function Layout() {
                   }`}
                 >
                   <Icon className="w-4 h-4" />
-                  <span>{label}</span>
+                  <span className="flex-1">{label}</span>
+                  {showBadge && (
+                    <span className="px-1.5 py-0.5 rounded-sm bg-ember-900/60 border border-ember-700/60 text-[9px] text-ember-300 font-body font-medium">
+                      {needsLeadCount > 99 ? '99+' : needsLeadCount}
+                    </span>
+                  )}
                 </div>
               </NavLink>
             );

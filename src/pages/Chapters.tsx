@@ -24,6 +24,7 @@ import {
   EyeOff,
   MessageSquare,
   Filter,
+  Sparkles,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import {
@@ -53,8 +54,10 @@ export default function Chapters() {
   const isLead = currentUser?.role === 'lead';
   const validationIssues = useAppStore((s) => s.validationIssues);
   const runChapterValidation = useAppStore((s) => s.runChapterValidation);
-  const clearValidation = useAppStore((s) => s.clearValidation);
+  const clearChapterIssues = useAppStore((s) => s.clearChapterIssues);
   const setIssueStatus = useAppStore((s) => s.setIssueStatus);
+  const pendingForeshadowing = useAppStore((s) => s.pendingForeshadowing);
+  const clearPendingForeshadowing = useAppStore((s) => s.clearPendingForeshadowing);
 
   const updateChapter = useAppStore((s) => s.updateChapter);
   const setChapterWriter = useAppStore((s) => s.setChapterWriter);
@@ -94,7 +97,7 @@ export default function Chapters() {
   }, [validationIssues, activeChapter, statusFilter]);
 
   const chapterIssueStats = useMemo(() => {
-    if (!activeChapter) return { errors: 0, warnings: 0, infos: 0, total: 0, open: 0, fixed: 0, ignored: 0, needsLead: 0 };
+    if (!activeChapter) return { errors: 0, warnings: 0, infos: 0, total: 0, open: 0, fixed: 0, ignored: 0, 'needs-lead': 0 };
     const sceneIds = new Set(activeChapter.scenes.map((s) => s.id));
     const allIssues = validationIssues.filter((i) => {
       if (i.category === 'foreshadowing') return true;
@@ -107,7 +110,7 @@ export default function Chapters() {
     const fixed = allIssues.filter((i) => i.status === 'fixed').length;
     const ignored = allIssues.filter((i) => i.status === 'ignored').length;
     const needsLead = allIssues.filter((i) => i.status === 'needs-lead').length;
-    return { errors, warnings, infos, total: allIssues.length, open, fixed, ignored, needsLead };
+    return { errors, warnings, infos, total: allIssues.length, open, fixed, ignored, 'needs-lead': needsLead };
   }, [validationIssues, activeChapter]);
 
   const handleSaveAndValidate = () => {
@@ -115,6 +118,7 @@ export default function Chapters() {
     setSaving(true);
     setTimeout(() => {
       runChapterValidation(activeChapterId);
+      clearPendingForeshadowing(activeChapterId);
       setSaving(false);
     }, 400);
   };
@@ -123,7 +127,6 @@ export default function Chapters() {
     setActiveChapterId(chId);
     setActiveSceneId(null);
     setExpandedSceneIds(new Set());
-    clearValidation();
   };
 
   const handleAddScene = () => {
@@ -191,9 +194,9 @@ export default function Chapters() {
               {saving ? '校验中…' : '保存并校验'}
             </button>
           )}
-          {chapterIssueStats.total > 0 && (
-            <button onClick={clearValidation} className="btn-ghost flex items-center gap-1.5 !text-xs">
-              <X className="w-3 h-3" /> 清除
+          {chapterIssueStats.total > 0 && activeChapterId && (
+            <button onClick={() => clearChapterIssues(activeChapterId)} className="btn-ghost flex items-center gap-1.5 !text-xs">
+              <X className="w-3 h-3" /> 清除当前章节
             </button>
           )}
           {chapterIssueStats.total > 0 ? (
@@ -222,6 +225,35 @@ export default function Chapters() {
           ) : null}
         </div>
       </div>
+
+      {activeChapterId && pendingForeshadowing[activeChapterId] && pendingForeshadowing[activeChapterId].length > 0 && (
+        <div className="px-6 py-3 bg-frost-950/40 border-b border-frost-700/40 flex items-start gap-3 shrink-0">
+          <Sparkles className="w-4 h-4 text-frost-400 mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-[12px] text-frost-300 font-body mb-1.5">
+              主笔建议在本章节铺垫以下线索，保存并校验后自动消除：
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {pendingForeshadowing[activeChapterId].map((hint, idx) => (
+                <div
+                  key={`${hint.clueId}-${hint.endingId}-${idx}`}
+                  className="px-2 py-1 bg-void-800/50 border border-frost-700/40 rounded-sm text-[10px] font-body flex items-center gap-1.5"
+                >
+                  <span className="text-frost-300">🔎 {hint.clueTitle}</span>
+                  <span className="text-ash-600">→</span>
+                  <span className="text-ember-400">{hint.endingTitle}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <button
+            onClick={() => clearPendingForeshadowing(activeChapterId)}
+            className="text-[10px] text-ash-500 hover:text-ash-300 font-body shrink-0"
+          >
+            清除
+          </button>
+        </div>
+      )}
 
       <div className="flex-1 flex min-h-0">
         <div className="w-64 shrink-0 border-r border-ink-700/60 bg-ink-900/40 flex flex-col min-h-0">
